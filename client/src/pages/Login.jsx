@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link, useOutletContext } from 'react-router-dom';
 import axios from 'axios';
+import { Lock } from 'lucide-react';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -20,7 +21,9 @@ export default function Login() {
       }, { withCredentials: true });
       
       const userRole = response.data.user.roleName;
-      if (userRole === 'Admin') {
+      if (userRole === 'Super Admin') {
+        navigate('/super-admin');
+      } else if (userRole === 'Admin') {
         navigate('/admin');
       } else {
         navigate('/dashboard');
@@ -40,7 +43,7 @@ export default function Login() {
         
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-zinc-800 rounded-xl flex items-center justify-center mx-auto mb-4 border border-zinc-700">
-            <span className="text-2xl">🔐</span>
+            <Lock className="text-white" size={24} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Welcome back</h1>
           <p className="text-zinc-400">Sign in to manage your tickets or events.</p>

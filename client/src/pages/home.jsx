@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
+import { Star, MapPin, Calendar, Clock, Ticket, Users, Image as ImageIcon, Plus, Map } from 'lucide-react';
 
 export default function Home() {
     const [events, setEvents] = useState([]);
@@ -9,6 +10,26 @@ export default function Home() {
     const [user, setUser] = useState(null);
     const [currentSlide, setCurrentSlide] = useState(0);
     const [myEvents, setMyEvents] = useState([]);
+
+
+    // Split events into top 10 (Carousel) mathematically scored by Top Average Rating
+    // Requirement: Only upcoming events that have at least one rating
+    const topEvents = useMemo(() => {
+        const now = new Date();
+        return [...events]
+            .filter(event => {
+                const isUpcoming = new Date(event.date) >= now;
+                const hasRating = (event.average_rating || 0) > 0;
+                return isUpcoming && hasRating;
+            })
+            .sort((a, b) => {
+                if (b.average_rating !== a.average_rating) {
+                    return b.average_rating - a.average_rating; // Highest rating first
+                }
+                return (b.review_count || 0) - (a.review_count || 0); // Tie breaker: most reviews
+            })
+            .slice(0, 10); // Take Top 10 Highest Rated
+    }, [events]);
 
     useEffect(() => {
         const checkSession = async () => {
@@ -58,7 +79,7 @@ export default function Home() {
     useEffect(() => {
         if (!user || events.length === 0) return;
         
-        const topEventsCount = Math.min(5, events.length);
+        const topEventsCount = topEvents.length;
         if (topEventsCount <= 1) return;
 
         const timer = setInterval(() => {
@@ -66,12 +87,58 @@ export default function Home() {
         }, 5000); // Change slide every 5 seconds
 
         return () => clearInterval(timer);
-    }, [user, events.length]);
+    }, [user, topEvents.length]);
 
     const filteredEvents = events.filter(e => 
         e.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
         e.location.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    // Split events into upcoming and ended
+    const { upcomingEvents, endedEvents } = useMemo(() => {
+        const now = new Date();
+        const upcoming = [];
+        const ended = [];
+        filteredEvents.forEach(event => {
+            if (new Date(event.date) < now) {
+                ended.push(event);
+            } else {
+                upcoming.push(event);
+            }
+        });
+        return { upcomingEvents: upcoming, endedEvents: ended };
+    }, [filteredEvents]);
+
+    const handleAddToCalendar = (event) => {
+        const startDate = new Date(event.date);
+        const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000); // Default 2 hours
+
+        const formatDate = (date) => {
+            return date.toISOString().replace(/-|:|\.\d+/g, '');
+        };
+
+        const icsContent = [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'BEGIN:VEVENT',
+            `DTSTART:${formatDate(startDate)}`,
+            `DTEND:${formatDate(endDate)}`,
+            `SUMMARY:${event.title}`,
+            `DESCRIPTION:${event.description || ''}`,
+            `LOCATION:${event.location}`,
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `${event.title.replace(/\s+/g, '_')}.ics`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
 
     // --- RENDER FOR GUESTS (Original Layout) ---
     if (!user) {
@@ -119,9 +186,9 @@ export default function Home() {
                                 <div key={n} className="bg-zinc-900 rounded-2xl h-80 animate-pulse border border-zinc-800"></div>
                             ))}
                         </div>
-                    ) : filteredEvents.length > 0 ? (
+                    ) : upcomingEvents.length > 0 ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-                            {filteredEvents.map(event => (
+                            {upcomingEvents.map(event => (
                                 <Link to={`/event/${event.id}`} key={event.id} className="group flex flex-col bg-zinc-900 rounded-2xl shadow-sm border border-zinc-800 overflow-hidden hover:shadow-2xl hover:border-zinc-700 transition-all">
                                     <div className="h-48 w-full bg-zinc-800 overflow-hidden relative">
                                         <img 
@@ -137,8 +204,13 @@ export default function Home() {
                                     </div>
                                     <div className="p-5 flex-1 flex flex-col">
                                         <h3 className="text-xl font-bold text-white mb-2 truncate group-hover:text-zinc-300 transition-colors">{event.title}</h3>
-                                        <div className="flex items-center text-sm text-zinc-400 mb-4">
-                                            <span>📍 {event.location}</span>
+                                        <div className="flex items-center gap-3 text-sm text-zinc-400 mb-4">
+                                            <span className="flex items-center gap-1.5 text-yellow-400 font-bold bg-yellow-400/10 px-2 py-0.5 rounded text-xs border border-yellow-400/20">
+                                                <Star size={12} className="fill-yellow-400" /> {event.average_rating > 0 ? `${parseFloat(event.average_rating).toFixed(1)} (${event.review_count})` : 'No ratings yet'}
+                                            </span>
+                                            <span className="truncate flex items-center gap-1">
+                                                <MapPin size={12} /> {event.location}
+                                            </span>
                                         </div>
                                         <p className="text-sm text-zinc-400 line-clamp-2 flex-1 mb-6">
                                             {event.description}
@@ -157,22 +229,74 @@ export default function Home() {
                         </div>
                     ) : (
                         <div className="text-center py-20 bg-zinc-900 rounded-2xl border border-zinc-800">
-                            <div className="text-4xl mb-4">🏕️</div>
-                            <h3 className="text-xl font-semibold text-white mb-2">No events found</h3>
+                            <div className="flex justify-center mb-4">
+                                <Map size={48} className="text-zinc-700" />
+                            </div>
+                            <h3 className="text-xl font-semibold text-white mb-2">No upcoming events</h3>
                             <p className="text-zinc-500">We couldn't find any upcoming events matching your criteria.</p>
                         </div>
                     )}
                 </div>
+
+                {/* Event Ended Section - Guest */}
+                {!loading && endedEvents.length > 0 && (
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+                        <div className="flex justify-between items-end mb-8">
+                            <div>
+                                <h2 className="text-3xl font-bold text-white">Event Ended</h2>
+                                <p className="text-zinc-400 mt-2">These events have already taken place.</p>
+                            </div>
+                            <span className="text-sm text-zinc-500 font-medium">{endedEvents.length} event{endedEvents.length !== 1 ? 's' : ''}</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+                            {endedEvents.map(event => (
+                                <Link to={`/event/${event.id}`} key={`ended-${event.id}`} className="group flex flex-col bg-zinc-900 rounded-2xl shadow-sm border border-zinc-800/50 overflow-hidden hover:shadow-xl hover:border-zinc-700 transition-all opacity-60 hover:opacity-90">
+                                    <div className="h-48 w-full bg-zinc-800 overflow-hidden relative">
+                                        <img 
+                                            src={event.image_url ? 
+                                                (event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`) : 
+                                                'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80'} 
+                                            alt={event.title}
+                                            className="w-full h-full object-cover grayscale-[30%] group-hover:grayscale-0 transition-all duration-500"
+                                        />
+                                        <div className="absolute top-4 left-4 bg-zinc-900/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-zinc-400 shadow-sm border border-zinc-800">
+                                            {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                        </div>
+                                        <div className="absolute top-4 right-4 bg-zinc-950/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-zinc-500 border border-zinc-800">
+                                            Ended
+                                        </div>
+                                    </div>
+                                    <div className="p-5 flex-1 flex flex-col">
+                                        <h3 className="text-xl font-bold text-zinc-300 mb-2 truncate group-hover:text-white transition-colors">{event.title}</h3>
+                                        <div className="flex items-center text-sm text-zinc-500 mb-4">
+                                            <span className="flex items-center gap-1">
+                                                <MapPin size={12} /> {event.location}
+                                            </span>
+                                        </div>
+                                        <p className="text-sm text-zinc-500 line-clamp-2 flex-1 mb-6">
+                                            {event.description}
+                                        </p>
+                                        <div className="pt-4 border-t border-zinc-800 flex items-center justify-between">
+                                            <span className="font-semibold text-zinc-500">
+                                                {event.capacity} total seats
+                                            </span>
+                                            <span className="text-zinc-400 font-medium text-sm bg-zinc-800/50 px-3 py-1.5 rounded-lg">
+                                                View Details →
+                                            </span>
+                                        </div>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
         );
-    }
-
-    // --- RENDER FOR LOGGED-IN USERS (AniWatch Style) ---
+    }    // --- RENDER FOR LOGGED-IN USERS (AniWatch Style) ---
     
-    // Split events into top 5 (Carousel) and the rest (Trending)
-    const topEvents = events.slice(0, 5);
-    const trendingEvents = events.slice(5);
-    const activeEvent = topEvents[currentSlide];
+    const trendingEvents = []; 
+    const activeEvent = topEvents[currentSlide] || topEvents[0] || {};
 
     return (
         <div className="w-full bg-[#0f1115] min-h-screen text-zinc-200">
@@ -210,19 +334,25 @@ export default function Home() {
                                 {activeEvent.title}
                             </h1>
                             
-                            {/* Meta Info row (Tags) */}
+                            {/* Meta Info */}
                             <div className="flex flex-wrap items-center gap-3 text-sm font-medium mt-4">
-                                <div className="flex items-center gap-1.5 text-zinc-300 py-1">
-                                    <span className="text-[#ffdd95]">📍</span> {activeEvent.location}
+                                <div className="flex items-center gap-1.5 text-yellow-400 font-bold bg-yellow-400/10 px-2.5 py-1 rounded border border-yellow-400/20">
+                                    <Star size={14} className="fill-yellow-400" /> {activeEvent.average_rating > 0 ? `${parseFloat(activeEvent.average_rating).toFixed(1)} (${activeEvent.review_count} reviews)` : 'No ratings yet'}
                                 </div>
                                 <span className="text-zinc-600">•</span>
                                 <div className="flex items-center gap-1.5 text-zinc-300 py-1">
-                                    <span className="text-[#ffdd95]">📅</span> {new Date(activeEvent.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                    <MapPin size={14} className="text-[#ffdd95]" /> {activeEvent.location}
                                 </div>
                                 <span className="text-zinc-600">•</span>
-                                <div className="bg-white/10 backdrop-blur-sm px-2.5 py-1 rounded text-white flex items-center gap-1">
-                                    <span className="text-[10px] uppercase tracking-wider text-zinc-400">Total Seats</span>
-                                    {activeEvent.capacity}
+                                <div className="flex items-center gap-1.5 text-zinc-300 py-1">
+                                    <Calendar size={14} className="text-[#ffdd95]" /> {new Date(activeEvent.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                </div>
+                                <div className="bg-white/10 backdrop-blur-sm px-2.5 py-1 rounded text-white flex items-center gap-2">
+                                    <Users size={12} className="text-zinc-400" />
+                                    <div className="flex flex-col">
+                                        <span className="text-[8px] uppercase tracking-wider text-zinc-400 leading-none">Total Seats</span>
+                                        <span className="leading-tight">{activeEvent.capacity}</span>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -237,10 +367,14 @@ export default function Home() {
                                     to={`/event/${activeEvent.id}`} 
                                     className="bg-[#ffdd95] hover:bg-[#ffc65c] text-black font-bold px-8 py-3.5 rounded-full flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
                                 >
-                                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                                    <Ticket size={20} />
                                     View Event
                                 </Link>
-                                <button className="bg-white/10 hover:bg-white/20 backdrop-blur-md text-white font-semibold px-6 py-3.5 rounded-full flex items-center gap-2 transition-colors border border-white/10">
+                                <button 
+                                    onClick={() => handleAddToCalendar(activeEvent)}
+                                    className="bg-white/10 hover:bg-white/20 backdrop-blur-md text-white font-semibold px-6 py-3.5 rounded-full flex items-center gap-2 transition-colors border border-white/10"
+                                >
+                                    <Calendar size={18} />
                                     Add to Calendar
                                 </button>
                             </div>
@@ -277,142 +411,135 @@ export default function Home() {
             ) : null}
 
             {/* My Created Events - Organizer Only */}
-            {user?.roleName === 'Admin' && myEvents.length > 0 && (
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-4">
-                    <div className="flex items-center gap-3 mb-8">
-                        <div className="flex items-center gap-2">
-                            <span className="bg-[#ffdd95] text-black font-extrabold px-2 py-0.5 rounded text-xs uppercase tracking-wider">Organizer</span>
-                            <h2 className="text-2xl font-bold text-white tracking-tight">My Created Events</h2>
-                        </div>
-                        <div className="h-0.5 flex-1 bg-gradient-to-r from-[#ffdd95]/30 to-transparent"></div>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                        {myEvents.map((event) => (
-                            <Link 
-                                to={`/event/${event.id}`} 
-                                key={`my-${event.id}`} 
-                                className="group relative flex flex-col gap-3"
-                            >
-                                {/* Poster Image */}
-                                <div className="relative aspect-[3/4] rounded-lg overflow-hidden bg-zinc-800 ring-1 ring-[#ffdd95]/20">
-                                    <img 
-                                        src={event.image_url ? 
-                                            (event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`) : 
-                                            'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80'} 
-                                        alt={event.title}
-                                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                    />
-                                    {/* Hover Darken Effect */}
-                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20"></div>
-                                    
-                                    {/* Date Badge */}
-                                    <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
-                                        {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+            {user?.roleName === 'Admin' && myEvents.length > 0 && (() => {
+                const now = new Date();
+                const myUpcoming = myEvents.filter(e => new Date(e.date) >= now);
+                const myEnded = myEvents.filter(e => new Date(e.date) < now);
+                return (
+                    <>
+                        {/* Upcoming Created Events */}
+                        {myUpcoming.length > 0 && (
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-4">
+                                <div className="flex items-center gap-3 mb-8">
+                                    <div className="flex items-center gap-2">
+                                        <span className="bg-[#ffdd95] text-black font-extrabold px-2 py-0.5 rounded text-xs uppercase tracking-wider">Organizer</span>
+                                        <h2 className="text-2xl font-bold text-white tracking-tight">My Created Events</h2>
                                     </div>
-                                    
-                                    {/* Organizer Badge */}
-                                    <div className="absolute top-2 right-2 bg-[#ffdd95]/90 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 uppercase tracking-wider">
-                                        Your Event
-                                    </div>
-
-                                    {/* Status Badge */}
-                                    <div className={`absolute bottom-2 left-2 text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 ${
-                                        event.status === 'Published' ? 'bg-green-500/90 text-white' : 'bg-zinc-600/90 text-zinc-200'
-                                    }`}>
-                                        {event.status}
-                                    </div>
-                                    
-                                    {/* Capacity Badge */}
-                                    <div className="absolute bottom-2 right-2 bg-[#ffdd95] text-black text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10">
-                                        {event.capacity} SEATS
-                                    </div>
-                                    
-                                    <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent z-0"></div>
+                                    <div className="h-0.5 flex-1 bg-gradient-to-r from-[#ffdd95]/30 to-transparent"></div>
                                 </div>
-                                
-                                {/* Poster Info */}
-                                <div>
-                                    <h3 className="text-[15px] font-bold text-white line-clamp-2 leading-tight group-hover:text-[#ffdd95] transition-colors">
-                                        {event.title}
-                                    </h3>
-                                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 mt-1.5">
-                                        <span className="truncate">📍 {event.location}</span>
-                                    </div>
-                                </div>
-                            </Link>
-                        ))}
-                    </div>
-                </div>
-            )}
 
-            {/* Trending Section (Anime Grid Style) */}
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-                <div className="flex items-center gap-3 mb-8">
-                    <h2 className="text-2xl font-bold text-white tracking-tight">Trending Events</h2>
-                    <div className="h-0.5 flex-1 bg-gradient-to-r from-white/10 to-transparent"></div>
-                </div>
-
-                {loading ? (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                        {[1, 2, 3, 4, 5].map(n => (
-                            <div key={n} className="aspect-[3/4] bg-white/5 rounded-xl animate-pulse"></div>
-                        ))}
-                    </div>
-                ) : trendingEvents.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                        {trendingEvents.map((event, idx) => (
-                            <Link 
-                                to={`/event/${event.id}`} 
-                                key={event.id} 
-                                className="group relative flex flex-col gap-3"
-                            >
-                                {/* Poster Image */}
-                                <div className="relative aspect-[3/4] rounded-lg overflow-hidden bg-zinc-800">
-                                    <img 
-                                        src={event.image_url ? 
-                                            (event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`) : 
-                                            'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80'} 
-                                        alt={event.title}
-                                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                    />
-                                    {/* Hover Darken Effect */}
-                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20"></div>
-                                    
-                                    {/* Date Badge */}
-                                    <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
-                                        {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                    </div>
-                                    
-                                    {/* Capacity Badge */}
-                                    <div className="absolute bottom-2 right-2 bg-[#ffdd95] text-black text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10">
-                                        {event.capacity} SEATS
-                                    </div>
-                                    
-                                    {/* Bottom gradient to make text readable if we added any */}
-                                    <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent z-0"></div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+                                    {myUpcoming.map((event) => (
+                                        <Link 
+                                            to={`/event/${event.id}`} 
+                                            key={`my-${event.id}`} 
+                                            className="group relative flex flex-col gap-3"
+                                        >
+                                            <div className="relative aspect-[3/4] rounded-lg overflow-hidden bg-zinc-800 ring-1 ring-[#ffdd95]/20">
+                                                <img 
+                                                    src={event.image_url ? 
+                                                        (event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`) : 
+                                                        'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80'} 
+                                                    alt={event.title}
+                                                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                                />
+                                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20"></div>
+                                                <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
+                                                    {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                                </div>
+                                                <div className="absolute top-2 right-2 bg-[#ffdd95]/90 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 uppercase tracking-wider">
+                                                    Your Event
+                                                </div>
+                                                <div className={`absolute bottom-2 left-2 text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 ${
+                                                    event.status === 'Published' ? 'bg-green-500/90 text-white' : 'bg-zinc-600/90 text-zinc-200'
+                                                }`}>
+                                                    {event.status}
+                                                </div>
+                                                <div className="absolute bottom-2 right-2 bg-[#ffdd95] text-black text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10">
+                                                    {event.capacity} SEATS
+                                                </div>
+                                                <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent z-0"></div>
+                                            </div>
+                                            <div>
+                                                <h3 className="text-[15px] font-bold text-white line-clamp-2 leading-tight group-hover:text-[#ffdd95] transition-colors">
+                                                    {event.title}
+                                                </h3>
+                                                <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-1.5">
+                                                    <span className="flex items-center gap-1 text-yellow-500 font-bold bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/20">
+                                                        <Star size={10} className="fill-yellow-500" /> {event.average_rating > 0 ? `${parseFloat(event.average_rating).toFixed(1)} (${event.review_count})` : 'No ratings yet'}
+                                                    </span>
+                                                    <span className="text-zinc-600">•</span>
+                                                    <span className="truncate flex items-center gap-1">
+                                                        <MapPin size={10} /> {event.location}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </Link>
+                                    ))}
                                 </div>
-                                
-                                {/* Poster Info (Below Image) */}
-                                <div>
-                                    <h3 className="text-[15px] font-bold text-white line-clamp-2 leading-tight group-hover:text-[#ffdd95] transition-colors">
-                                        {event.title}
-                                    </h3>
-                                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 mt-1.5">
-                                        <span className="truncate">📍 {event.location}</span>
-                                    </div>
-                                </div>
-                            </Link>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="text-zinc-500 py-12 text-sm">
-                        No more trending events available right now.
-                    </div>
-                )}
-            </div>
+                            </div>
+                        )}
 
-            {/* All Events Section */}
+                        {/* Ended Created Events */}
+                        {myEnded.length > 0 && (
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4">
+                                <div className="flex items-center gap-3 mb-8">
+                                    <div className="flex items-center gap-2">
+                                        <span className="bg-zinc-700 text-zinc-300 font-extrabold px-2 py-0.5 rounded text-xs uppercase tracking-wider">Organizer</span>
+                                        <Clock size={20} className="text-zinc-600" />
+                                        <h2 className="text-2xl font-bold text-zinc-400 tracking-tight">My Ended Events</h2>
+                                    </div>
+                                    <div className="h-0.5 flex-1 bg-gradient-to-r from-white/5 to-transparent"></div>
+                                    <span className="text-xs text-zinc-600 font-medium">{myEnded.length} event{myEnded.length !== 1 ? 's' : ''}</span>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+                                    {myEnded.map((event) => (
+                                        <Link 
+                                            to={`/event/${event.id}`} 
+                                            key={`my-ended-${event.id}`} 
+                                            className="group relative flex flex-col gap-3 opacity-50 hover:opacity-80 transition-opacity"
+                                        >
+                                            <div className="relative aspect-[3/4] rounded-lg overflow-hidden bg-zinc-800 ring-1 ring-zinc-700/30">
+                                                <img 
+                                                    src={event.image_url ? 
+                                                        (event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`) : 
+                                                        'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80'} 
+                                                    alt={event.title}
+                                                    className="w-full h-full object-cover grayscale-[40%] group-hover:grayscale-0 transition-all duration-500 group-hover:scale-110"
+                                                />
+                                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20"></div>
+                                                <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-zinc-400 text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
+                                                    {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                                </div>
+                                                <div className="absolute top-2 right-2 bg-zinc-950/90 backdrop-blur-sm text-zinc-500 text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 border border-zinc-800">
+                                                    ENDED
+                                                </div>
+                                                <div className="absolute bottom-2 right-2 bg-zinc-700 text-zinc-300 text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10">
+                                                    {event.capacity} SEATS
+                                                </div>
+                                                <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent z-0"></div>
+                                            </div>
+                                            <div>
+                                                <h3 className="text-[15px] font-bold text-zinc-400 line-clamp-2 leading-tight group-hover:text-zinc-200 transition-colors">
+                                                    {event.title}
+                                                </h3>
+                                                <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 mt-1.5">
+                                                    <span className="truncate flex items-center gap-1">
+                                                        <MapPin size={10} /> {event.location}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </Link>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </>
+                );
+            })()}
+
+            {/* All Events Section (Upcoming Only) */}
             <div className="bg-[#15171e] w-full py-16 border-t border-white/5">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center gap-3 mb-8">
@@ -426,15 +553,14 @@ export default function Home() {
                                 <div key={n} className="aspect-[3/4] bg-zinc-800 rounded-xl animate-pulse"></div>
                             ))}
                         </div>
-                    ) : events.length > 0 ? (
+                    ) : upcomingEvents.length > 0 ? (
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                            {events.map((event) => (
+                            {upcomingEvents.map((event) => (
                                 <Link 
                                     to={`/event/${event.id}`} 
                                     key={`all-${event.id}`} 
                                     className="group relative flex flex-col gap-3"
                                 >
-                                    {/* Poster Image */}
                                     <div className="relative aspect-[3/4] rounded-lg overflow-hidden bg-zinc-800">
                                         <img 
                                             src={event.image_url ? 
@@ -443,30 +569,27 @@ export default function Home() {
                                             alt={event.title}
                                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                                         />
-                                        {/* Hover Darken Effect */}
                                         <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20"></div>
-                                        
-                                        {/* Date Badge */}
                                         <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
                                             {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                         </div>
-                                        
-                                        {/* Capacity Badge */}
                                         <div className="absolute bottom-2 right-2 bg-[#ffdd95] text-black text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10">
                                             {event.capacity} SEATS
                                         </div>
-                                        
-                                        {/* Bottom gradient to make text readable if we added any */}
                                         <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent z-0"></div>
                                     </div>
-                                    
-                                    {/* Poster Info (Below Image) */}
                                     <div>
                                         <h3 className="text-[15px] font-bold text-white line-clamp-2 leading-tight group-hover:text-[#ffdd95] transition-colors">
                                             {event.title}
                                         </h3>
-                                        <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 mt-1.5">
-                                            <span className="truncate">📍 {event.location}</span>
+                                        <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-1.5">
+                                            <span className="flex items-center gap-1 text-yellow-500 font-bold bg-yellow-400/10 px-1.5 py-0.5 rounded border border-yellow-400/20">
+                                                <Star size={10} className="fill-yellow-500" /> {event.average_rating > 0 ? `${parseFloat(event.average_rating).toFixed(1)} (${event.review_count})` : 'No ratings yet'}
+                                            </span>
+                                            <span className="text-zinc-600">•</span>
+                                            <span className="truncate flex items-center gap-1">
+                                                <MapPin size={10} /> {event.location}
+                                            </span>
                                         </div>
                                     </div>
                                 </Link>
@@ -474,11 +597,69 @@ export default function Home() {
                         </div>
                     ) : (
                         <div className="text-zinc-500 py-12 text-sm text-center">
-                            No events found in the system.
+                            No upcoming events found.
                         </div>
                     )}
                 </div>
             </div>
+
+            {/* Event Ended Section - Logged In */}
+            {!loading && endedEvents.length > 0 && (
+                <div className="bg-[#12141a] w-full py-16 border-t border-white/5">
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div className="flex items-center gap-3 mb-8">
+                            <div className="flex items-center gap-2">
+                                <Clock size={20} className="text-zinc-600" />
+                                <h2 className="text-2xl font-bold text-zinc-400 tracking-tight">Event Ended</h2>
+                            </div>
+                            <div className="h-0.5 flex-1 bg-gradient-to-r from-white/5 to-transparent"></div>
+                            <span className="text-xs text-zinc-600 font-medium">{endedEvents.length} event{endedEvents.length !== 1 ? 's' : ''}</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+                            {endedEvents.map((event) => (
+                                <Link 
+                                    to={`/event/${event.id}`} 
+                                    key={`ended-${event.id}`} 
+                                    className="group relative flex flex-col gap-3 opacity-50 hover:opacity-80 transition-opacity"
+                                >
+                                    <div className="relative aspect-[3/4] rounded-lg overflow-hidden bg-zinc-800">
+                                        <img 
+                                            src={event.image_url ? 
+                                                (event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`) : 
+                                                'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80'} 
+                                            alt={event.title}
+                                            className="w-full h-full object-cover grayscale-[40%] group-hover:grayscale-0 transition-all duration-500 group-hover:scale-110"
+                                        />
+                                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20"></div>
+                                        <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-zinc-400 text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
+                                            {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                        </div>
+                                        <div className="absolute top-2 right-2 bg-zinc-950/90 backdrop-blur-sm text-zinc-500 text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 border border-zinc-800">
+                                            ENDED
+                                        </div>
+                                        <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent z-0"></div>
+                                    </div>
+                                    <div>
+                                        <h3 className="text-[15px] font-bold text-zinc-400 line-clamp-2 leading-tight group-hover:text-zinc-200 transition-colors">
+                                            {event.title}
+                                        </h3>
+                                        <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-1.5">
+                                            <span className="flex items-center gap-1 text-yellow-500/70 font-bold bg-yellow-400/5 px-1.5 py-0.5 rounded border border-yellow-500/10">
+                                                <Star size={10} className="fill-yellow-500/70" /> {event.average_rating > 0 ? `${parseFloat(event.average_rating).toFixed(1)} (${event.review_count})` : 'No ratings yet'}
+                                            </span>
+                                            <span className="text-zinc-700">•</span>
+                                            <span className="truncate flex items-center gap-1">
+                                                <MapPin size={10} /> {event.location}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
