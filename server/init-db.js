@@ -56,6 +56,7 @@ CREATE TABLE registrations (
     total_price DECIMAL(10, 2) NOT NULL,
     payment_status VARCHAR(50) DEFAULT 'Pending',
     qr_code VARCHAR(255),
+    is_archived BOOLEAN DEFAULT FALSE,
     purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

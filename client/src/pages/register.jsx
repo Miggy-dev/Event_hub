@@ -1,27 +1,58 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
+import { Sparkles } from 'lucide-react';
 
 export default function Register() {
   const [formData, setFormData] = useState({
     username: '',
     name: '',
     password: '',
-    roleName: 'User' // Default standard role
+    roleName: 'User',
+    bio: ''
   });
+  const [profileImage, setProfileImage] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProfileImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
     
+    const data = new FormData();
+    data.append('username', formData.username);
+    data.append('name', formData.name);
+    data.append('password', formData.password);
+    data.append('roleName', formData.roleName);
+    data.append('bio', formData.bio);
+    if (profileImage) {
+      data.append('profile_image', profileImage);
+    }
+
     try {
-      await axios.post(`${import.meta.env.VITE_API_URL}/register`, formData);
+      await axios.post(`${import.meta.env.VITE_API_URL}/register`, data, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
       navigate('/login');
     } catch (error) {
+      console.error("Registration full error:", error);
       setError(error.response?.data?.message || 'Registration failed. Try again.');
     } finally {
       setIsLoading(false);
@@ -34,7 +65,7 @@ export default function Register() {
         
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-zinc-800 rounded-xl flex items-center justify-center mx-auto mb-4 border border-zinc-700">
-            <span className="text-2xl">✨</span>
+            <Sparkles className="text-[#ffdd95]" size={24} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Create an Account</h1>
           <p className="text-zinc-400">Join EventHub to start booking tickets.</p>
@@ -46,6 +77,29 @@ export default function Register() {
               <p className="text-sm text-red-400 font-medium">{error}</p>
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Profile Photo (Optional)</label>
+            <div className="flex items-center gap-4 bg-zinc-800 p-4 rounded-xl border border-zinc-700 border-dashed hover:border-zinc-500 transition-colors cursor-pointer relative">
+              <input 
+                type="file" 
+                accept="image/*"
+                onChange={handleImageChange}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+              />
+              <div className="w-16 h-16 rounded-full bg-zinc-700 overflow-hidden flex items-center justify-center border border-zinc-600 flex-shrink-0">
+                {imagePreview ? (
+                  <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                ) : (
+                  <Sparkles size={24} className="text-zinc-500" />
+                )}
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-bold text-white uppercase tracking-wider">Choose File</p>
+                <p className="text-[10px] text-zinc-500 mt-1">Recommended: Square PNG/JPG</p>
+              </div>
+            </div>
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">Full Name</label>
@@ -93,6 +147,16 @@ export default function Register() {
                 <option value="User" className="bg-zinc-900">Attendee (Book Tickets)</option>
                 <option value="Admin" className="bg-zinc-900">Organizer (Create Events)</option>
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Bio (Optional)</label>
+            <textarea
+              value={formData.bio}
+              onChange={(e) => setFormData({...formData, bio: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-zinc-600 transition-all text-sm text-white placeholder-zinc-500 resize-none h-24"
+              placeholder="Tell us a bit about yourself..."
+            />
           </div>
 
           <button
