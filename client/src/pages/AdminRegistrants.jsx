@@ -87,7 +87,7 @@ export default function AdminRegistrants() {
                 </div>
                 <div className="bg-zinc-900 p-6 rounded-2xl shadow-xl border border-zinc-800">
                     <div className="text-zinc-500 mb-1 font-medium">Order Revenue</div>
-                    <div className="text-3xl font-bold text-white">${totalRevenue.toLocaleString()}</div>
+                    <div className="text-3xl font-bold text-white">₱{totalRevenue.toLocaleString()}</div>
                 </div>
             </div>
 
@@ -124,7 +124,7 @@ export default function AdminRegistrants() {
                                         </span>
                                     </td>
                                     <td className="p-4 font-bold text-green-400">
-                                        ${parseFloat(reg.revenue).toFixed(2)}
+                                        ₱{parseFloat(reg.revenue).toFixed(2)}
                                     </td>
                                     <td className="p-4 text-sm text-zinc-500">
                                         {new Date(reg.purchased_at).toLocaleString()}
