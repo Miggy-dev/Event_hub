@@ -507,7 +507,7 @@ export default function EventDetails() {
                                                         </p>
                                                     </div>
                                                     <div className="text-lg text-white font-extrabold text-right flex flex-col">
-                                                        <span>${parseFloat(ticket.price).toFixed(2)}</span>
+                                                        <span>₱{parseFloat(ticket.price).toFixed(2)}</span>
                                                     </div>
                                                 </div>
                                             ))}
@@ -538,15 +538,15 @@ export default function EventDetails() {
                                     <div className="bg-zinc-900 p-5 rounded-xl border border-zinc-700 shadow-sm mt-8">
                                         <div className="flex justify-between items-center text-sm font-medium text-zinc-400 mb-2">
                                             <span>Subtotal ({quantity}x)</span>
-                                            <span>${(parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity).toFixed(2)}</span>
+                                            <span>₱{(parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity).toFixed(2)}</span>
                                         </div>
                                         <div className="flex justify-between items-center text-sm font-medium text-zinc-400 mb-4 pb-4 border-b border-zinc-700">
                                             <span>Platform Fee</span>
-                                            <span>$2.50</span>
+                                            <span>₱2.50</span>
                                         </div>
                                         <div className="flex justify-between items-center font-bold text-lg text-white">
                                             <span>Total</span>
-                                            <span>${((parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity) + 2.50).toFixed(2)}</span>
+                                            <span>₱{((parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity) + 2.50).toFixed(2)}</span>
                                         </div>
                                     </div>
                                 )}
