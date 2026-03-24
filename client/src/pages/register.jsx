@@ -68,7 +68,7 @@ export default function Register() {
             <Sparkles className="text-[#ffdd95]" size={24} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Create an Account</h1>
-          <p className="text-zinc-400">Join EventHub to start booking tickets.</p>
+          <p className="text-zinc-400">Stop scrolling, start living. Join EventHub!</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">

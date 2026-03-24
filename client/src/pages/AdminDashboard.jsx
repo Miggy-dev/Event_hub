@@ -226,7 +226,7 @@ export default function AdminDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
                     <div className="bg-zinc-900 p-6 rounded-2xl shadow-2xl border border-zinc-800">
                         <div className="text-zinc-500 mb-2 font-medium">Total Revenue</div>
-                        <div className="text-3xl font-bold text-white">${stats.revenue?.toLocaleString() || 0}</div>
+                        <div className="text-3xl font-bold text-white">₱{stats.revenue?.toLocaleString() || 0}</div>
                     </div>
                     <div className="bg-zinc-900 p-6 rounded-2xl shadow-2xl border border-zinc-800">
                         <div className="text-zinc-500 mb-2 font-medium">Active Registrations</div>
@@ -464,7 +464,7 @@ export default function AdminDashboard() {
                                     <input required type="number" min="1" value={newEvent.capacity} onChange={e => setNewEvent({...newEvent, capacity: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Ticket Price ($)</label>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Ticket Price (₱)</label>
                                     <input type="number" step="0.01" min="0" value={ticketTier.price} onChange={e => setTicketTier({...ticketTier, price: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white" placeholder="e.g. 50.00" />
                                 </div>
                                 <div>
