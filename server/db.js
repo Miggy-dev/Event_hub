@@ -14,16 +14,19 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 const isProduction = process.env.NODE_ENV === 'production';
 
 export const pool = new Pool({
-    user: process.env.DB_USER || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'eventhub',
-    password: process.env.DB_PASS || 'miguel@10',
-    port: process.env.DB_PORT || 5432,
+    connectionString: process.env.DATABASE_URL,
     ssl: isProduction ? { rejectUnauthorized: false } : false
 });
 
+if (!process.env.DATABASE_URL) {
+    console.warn('WARNING: DATABASE_URL is not defined in environment variables.');
+}
+
 console.log('--- Database Config ---');
-console.log('User:', process.env.DB_USER);
-console.log('Database:', process.env.DB_NAME);
-console.log('SSL:', isProduction ? 'Enabled' : 'Disabled');
+console.log('DATABASE_URL Present:', !!process.env.DATABASE_URL);
+if (process.env.DATABASE_URL) {
+    const host = process.env.DATABASE_URL.match(/@([^/]+)/)?.[1];
+    console.log('Database Host:', host || 'Unknown');
+}
+console.log('SSL Mode:', isProduction ? 'Enabled' : 'Disabled');
 console.log('-----------------------');
