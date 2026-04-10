@@ -6,10 +6,12 @@ import session from 'express-session';
 import { pool } from './db.js';
 import { randomUUID } from 'crypto';
 import { hashPassword, comparePassword } from './components/hash.js';
+import { sendRegistrationConfirmationEmail, sendCheckInConfirmationEmail } from './components/email.js';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import QRCode from 'qrcode';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,7 +39,9 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000'
+  'http://127.0.0.1:3000',
+  // Add PUBLIC_URL (for phone access)
+  process.env.PUBLIC_URL || 'http://localhost:5173'
 ];
 
 app.use((req, res, next) => {
@@ -48,8 +52,15 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    // Allow all Vercel preview deployments
-    if (origin.endsWith('.vercel.app') || allowedOrigins.includes(origin)) {
+    
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const isVercel = origin.endsWith('.vercel.app');
+    const isLocal = origin.includes('localhost') || 
+                    origin.includes('127.0.0.1') || 
+                    origin.startsWith('http://10.') || 
+                    origin.startsWith('http://192.168.');
+
+    if (isDevelopment || isVercel || isLocal || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     return callback(new Error('Not allowed by CORS'));
@@ -105,13 +116,16 @@ const requireSuperAdmin = async (req, res, next) => {
 
 // --- AUTH APIs ---
 app.post('/register', upload.single('profile_image'), async (req, res) => {
-    const { username, password, name, roleName = 'User', bio = '' } = req.body;
+    const { username, name, password, roleName = 'User', bio = '', phoneNumber, emailAddress } = req.body;
+    const phone = phoneNumber || req.body.phone || null;
+    const email = emailAddress || req.body.email || null;
+    
     const id = randomUUID();
     const profile_image = req.file ? req.file.filename : null;
     
-    console.log('--- Registration Attempt ---');
+    console.log('--- [FINAL] Registration Attempt ---');
+    console.log('Processed Data:', { username, name, email, phone });
     console.log('Body Keys:', Object.keys(req.body));
-    console.log('Username:', username);
     
     try {
         if (!username || !password) {
@@ -120,30 +134,36 @@ app.post('/register', upload.single('profile_image'), async (req, res) => {
 
         const hashedPassword = hashPassword(password, 10);
         
-        // Find role_id
-        const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
+        // Robust role lookup
+        const roleResult = await pool.query('SELECT id FROM roles WHERE LOWER(name) = LOWER($1)', [roleName]);
         if (roleResult.rows.length === 0) {
-            return res.status(400).json({ success: false, message: 'Invalid role specified' });
+            return res.status(400).json({ success: false, message: `Invalid role: ${roleName}` });
         }
         const roleId = roleResult.rows[0].id;
         
-        // Check if username already exists (case-insensitive)
+        // Check if username already exists
         const userCheck = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
         if (userCheck.rows.length > 0) {
             return res.status(400).json({ success: false, message: 'Username is already taken' });
         }
 
-        await pool.query(
-            'INSERT INTO users (id, username, password, name, role_id, profile_image, bio) VALUES ($1, $2, $3, $4, $5, $6, $7)', 
-            [id, username, hashedPassword, name, roleId, profile_image, bio]
-        );
+        const insertQuery = `
+            INSERT INTO users (id, username, password, name, role_id, profile_image, bio, phone, email) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `;
+
+        const values = [id, username, hashedPassword, name, roleId, profile_image, bio, phone, email];
+        
+        await pool.query(insertQuery, values);
+        
+        console.log('Registration Successful for:', username);
         res.status(201).json({ success: true, message: 'User registered successfully' });
     } catch (error) {
-        console.error('Registration error:', error);
-        if (error.code === '23505') {
-            return res.status(400).json({ success: false, message: 'Username is already taken' });
-        }
-        res.status(500).json({ success: false, message: `Registration failed: ${error.message}${error.code ? ' (Code: ' + error.code + ')' : ''}` });
+        console.error('Registration error [CRITICAL]:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: `Registration failed: ${error.message} (Code: ${error.code})` 
+        });
     }
 });
 
@@ -163,8 +183,8 @@ app.post('/super-register', async (req, res) => {
         const roleId = roleResult.rows[0].id;
 
         await pool.query(
-            'INSERT INTO users (id, username, password, name, role_id, profile_image, bio) VALUES ($1, $2, $3, $4, $5, $6, $7)', 
-            [id, username, hashedPassword, name, roleId, '', '']
+            'INSERT INTO users (id, username, password, name, role_id, profile_image, bio, phone, email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', 
+            [id, username, hashedPassword, name, roleId, '', '', null, null]
         );
         res.status(201).json({ success: true, message: 'Super Admin created successfully' });
     } catch (error) {
@@ -315,7 +335,6 @@ app.post('/login', async (req, res) => {
 
         const user = result.rows[0];
         const match = comparePassword(password, user.password);
-        console.log(`Password Match: ${match}, Length: ${password.length}, Hash Prefix: ${user.password.substring(0, 10)}`);
 
         if (match) {
             req.session.user = { 
@@ -324,15 +343,14 @@ app.post('/login', async (req, res) => {
                 name: user.name, 
                 roleName: user.role_name,
                 profile_image: user.profile_image,
-                bio: user.bio
+                bio: user.bio,
+                phone: user.phone,
+                email: user.email
             };
             res.status(200).json({ 
                 success: true, 
                 message: 'Login successful', 
-                user: {
-                    ...req.session.user,
-                    username: user.username // Explicitly from DB
-                } 
+                user: req.session.user 
             });
         } else {
             res.status(401).json({ success: false, message: 'Invalid credentials' });
@@ -346,16 +364,49 @@ app.post('/login', async (req, res) => {
 app.get('/get-session', async (req, res) => {
     if (req.session.user) {
         try {
-            // Force fetch latest username from DB to be 100% sure
-            const userRes = await pool.query('SELECT username FROM users WHERE id = $1', [req.session.user.id]);
-            const dbUsername = userRes.rows[0]?.username;
+            const userRes = await pool.query('SELECT * FROM users WHERE id = $1', [req.session.user.id]);
+            const dbUser = userRes.rows[0];
+
+            let isRestricted = false;
+            let totalOwed = 0;
+
+            if (req.session.user.roleName === 'Admin') {
+                const overdueCheck = await pool.query(`
+                    SELECT COUNT(*), COALESCE(SUM(r.platform_fee), 0) as total_owed
+                    FROM registrations r
+                    JOIN events e ON r.event_id = e.id
+                    WHERE e.organizer_id = $1 
+                    AND r.platform_fee_status = 'Pending'
+                    AND r.purchased_at < NOW() - INTERVAL '30 days'
+                `, [req.session.user.id]);
+                
+                if (parseInt(overdueCheck.rows[0].count) > 0) {
+                    isRestricted = true;
+                }
+
+                const debtCheck = await pool.query(`
+                    SELECT COALESCE(SUM(r.platform_fee), 0) as total_owed
+                    FROM registrations r
+                    JOIN events e ON r.event_id = e.id
+                    WHERE e.organizer_id = $1 
+                    AND r.platform_fee_status = 'Pending'
+                `, [req.session.user.id]);
+                totalOwed = parseFloat(debtCheck.rows[0].total_owed);
+            }
             
             res.status(200).json({ 
                 success: true, 
                 session: true, 
                 user: {
                     ...req.session.user,
-                    username: dbUsername || req.session.user.username || 'System Error: No Username'
+                    phone: dbUser?.phone || req.session.user.phone,
+                    email: dbUser?.email || req.session.user.email,
+                    username: dbUser?.username || req.session.user.username,
+                    name: dbUser?.name || req.session.user.name,
+                    bio: dbUser?.bio || req.session.user.bio,
+                    profile_image: dbUser?.profile_image || req.session.user.profile_image,
+                    isRestricted,
+                    totalOwed
                 }
             });
         } catch (error) {
@@ -406,7 +457,9 @@ app.put('/profile/password', requireAuth, async (req, res) => {
 });
 
 app.put('/profile', requireAuth, upload.single('profile_image'), async (req, res) => {
-    const { name, bio } = req.body;
+    const { name, bio, phoneNumber, emailAddress } = req.body;
+    const phone = phoneNumber || req.body.phone;
+    const email = emailAddress || req.body.email;
     const userId = req.session.user.id;
     const profile_image = req.file ? req.file.filename : req.session.user.profile_image;
 
@@ -416,8 +469,15 @@ app.put('/profile', requireAuth, upload.single('profile_image'), async (req, res
         }
 
         await pool.query(
-            'UPDATE users SET name = $1, bio = $2, profile_image = $3 WHERE id = $4',
-            [name || req.session.user.name, bio || req.session.user.bio, profile_image, userId]
+            'UPDATE users SET name = $1, bio = $2, profile_image = $3, phone = $4, email = $5 WHERE id = $6',
+            [
+                name || req.session.user.name, 
+                bio || req.session.user.bio, 
+                profile_image, 
+                phone || req.session.user.phone,
+                email || req.session.user.email,
+                userId
+            ]
         );
         
         // Update session
@@ -425,7 +485,9 @@ app.put('/profile', requireAuth, upload.single('profile_image'), async (req, res
             ...req.session.user, 
             name: name || req.session.user.name, 
             bio: bio || req.session.user.bio, 
-            profile_image 
+            profile_image,
+            phone: phone || req.session.user.phone,
+            email: email || req.session.user.email
         };
 
         res.status(200).json({ success: true, message: 'Profile updated successfully', user: req.session.user });
@@ -438,7 +500,15 @@ app.put('/profile', requireAuth, upload.single('profile_image'), async (req, res
 // --- EVENT MANAGEMENT APIs ---
 app.get('/events', async (req, res) => {
     try {
-        const eventsResult = await pool.query('SELECT * FROM events ORDER BY date ASC');
+        const eventsResult = await pool.query(`
+            SELECT e.*, 
+                   COALESCE(SUM(t.quantity_available), 0) as total_available_tickets,
+                   COUNT(t.id) as ticket_tier_count
+            FROM events e
+            LEFT JOIN tickets t ON e.id = t.event_id
+            GROUP BY e.id
+            ORDER BY e.date ASC
+        `);
         const events = eventsResult.rows;
 
         // Fetch all reviews to calculate weighted averages
@@ -497,7 +567,7 @@ app.get('/events/:id/registrants', requireAdmin, async (req, res) => {
         // Fetch registrants
         const registrants = await pool.query(`
             SELECT 
-                r.id, r.quantity, r.total_price as revenue, r.purchased_at, r.device_info,
+                r.id, r.quantity, r.total_price as revenue, r.purchased_at, r.device_info, r.payment_status,
                 u.name as user_name, u.username as user_email,
                 COALESCE(t.name, 'Free Registration') as ticket_name
             FROM registrations r
@@ -517,7 +587,15 @@ app.get('/events/:id/registrants', requireAdmin, async (req, res) => {
 app.get('/events/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const eventResult = await pool.query('SELECT * FROM events WHERE id = $1', [id]);
+        const eventResult = await pool.query(`
+            SELECT e.*, 
+                   COALESCE(SUM(t.quantity_available), 0) as total_available_tickets,
+                   COUNT(t.id) as ticket_tier_count
+            FROM events e
+            LEFT JOIN tickets t ON e.id = t.event_id
+            WHERE e.id = $1
+            GROUP BY e.id
+        `, [id]);
         if (eventResult.rows.length === 0) return res.status(404).json({ success: false, message: 'Event not found' });
         
         const eventData = eventResult.rows[0];
@@ -596,7 +674,12 @@ app.get('/events/:id', async (req, res) => {
             userComment,
             reviews: reviewsToShow,
             isAdmin: req.session.user?.roleName === 'Admin',
-            userName: req.session.user?.name
+            isSuperAdmin: req.session.user?.roleName === 'Super Admin',
+            userName: req.session.user?.name,
+            currentUserId: req.session.user?.id,
+            canRegister: req.session.user 
+                ? (req.session.user.roleName !== 'Super Admin' && eventData.organizer_id !== req.session.user.id)
+                : true
         });
     } catch (error) {
         console.error('Fetch event details error:', error);
@@ -640,6 +723,29 @@ app.post('/events/:id/rate', async (req, res) => {
     } catch (error) {
         console.error('Rating error:', error);
         res.status(500).json({ success: false, message: 'Failed to save rating' });
+    }
+});
+
+// Delete rating/review
+app.delete('/events/:id/rate', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const userId = req.session.user.id;
+
+    try {
+        // Delete the user's review for this event
+        const result = await pool.query(
+            'DELETE FROM event_reviews WHERE event_id = $1 AND user_id = $2',
+            [id, userId]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, message: 'Review not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'Review deleted successfully!' });
+    } catch (error) {
+        console.error('Delete rating error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete rating' });
     }
 });
 
@@ -783,18 +889,77 @@ app.post('/events/:id/tickets', requireAdmin, async (req, res) => {
     }
 });
 
+// Update tickets for an event
+app.put('/events/:id/tickets', requireAdmin, async (req, res) => {
+    const { id } = req.params; // Event ID
+    const { price, quantity_available } = req.body;
+    const organizerId = req.session.user.id;
+    
+    try {
+        // Verify ownership
+        const eventCheck = await pool.query('SELECT organizer_id FROM events WHERE id = $1', [id]);
+        if (eventCheck.rows.length === 0) return res.status(404).json({ success: false, message: 'Event not found' });
+        if (eventCheck.rows[0].organizer_id !== organizerId) {
+            return res.status(403).json({ success: false, message: 'Forbidden: You can only edit tickets for your own events' });
+        }
+
+        // Check if ticket exists
+        const ticketCheck = await pool.query('SELECT id FROM tickets WHERE event_id = $1', [id]);
+        
+        if (ticketCheck.rows.length > 0) {
+            // Update existing
+            await pool.query(
+                'UPDATE tickets SET price = $1, quantity_available = $2 WHERE event_id = $3',
+                [price, quantity_available, id]
+            );
+        } else {
+            // Create new if none exists
+            const ticketId = randomUUID();
+            await pool.query(
+                `INSERT INTO tickets (id, event_id, name, price, quantity_available) VALUES ($1, $2, $3, $4, $5)`,
+                [ticketId, id, 'General Admission', price, quantity_available]
+            );
+        }
+        res.status(200).json({ success: true, message: 'Tickets updated successfully' });
+    } catch (error) {
+        console.error('Update ticket error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update tickets' });
+    }
+});
+
 // --- REGISTRATIONS ---
 app.post('/register-event', requireAuth, async (req, res) => {
-    const { event_id, ticket_id, quantity, device_info } = req.body;
-    const user_id = req.session.user.id;
-    const reg_id = randomUUID();
-    const qr_code = randomUUID(); // Define qr_code here
-
     try {
+        const { event_id, ticket_id, quantity, device_info, paymentMethod = 'Person-to-Person' } = req.body;
+        const user_id = req.session.user.id;
+        const reg_id = randomUUID();
+        const qr_code = randomUUID();
+
+        // 0. Security Block: Super Admins and Organizers cannot register
+        const eventCheckResult = await pool.query('SELECT organizer_id, title FROM events WHERE id = $1', [event_id]);
+        if (eventCheckResult.rows.length === 0) throw new Error('Event not found');
+        
+        const isSuperAdmin = req.session.user.roleName === 'Super Admin';
+        const isOrganizer = eventCheckResult.rows[0].organizer_id === user_id;
+
+        if (isSuperAdmin) {
+            return res.status(403).json({ success: false, message: 'Super Admins are not allowed to register for events.' });
+        }
+        if (isOrganizer) {
+            return res.status(403).json({ success: false, message: 'Organizers cannot register for their own events.' });
+        }
+
         await pool.query('BEGIN');
         
         let totalPrice = 0;
+        let PLATFORM_FEE_VALUE = 2.00; // Default fallback
         let ticketIdToStore = ticket_id;
+
+        // Fetch current fee from settings
+        const feeConfig = await pool.query("SELECT value FROM platform_settings WHERE key = 'platform_fee' LIMIT 1");
+        if (feeConfig.rows.length > 0) {
+            PLATFORM_FEE_VALUE = parseFloat(feeConfig.rows[0].value);
+        }
 
         if (ticket_id) {
             const ticketResult = await pool.query('SELECT price, quantity_available FROM tickets WHERE id = $1', [ticket_id]);
@@ -808,24 +973,42 @@ app.post('/register-event', requireAuth, async (req, res) => {
             // Deduct ticket quantity
             await pool.query('UPDATE tickets SET quantity_available = quantity_available - $1 WHERE id = $2', [quantity, ticket_id]);
         } else {
-            // Check if the event has any tickets at all
-            const eventTickets = await pool.query('SELECT id FROM tickets WHERE event_id = $1', [event_id]);
-            if (eventTickets.rows.length > 0) {
-                throw new Error('Please select a ticket tier for this event');
-            }
-            // Event has no tickets, allow free registration
+            // Free registration or no ticket tier
             totalPrice = 0;
+            PLATFORM_FEE_VALUE = 0; // No fee for free events
             ticketIdToStore = null;
         }
 
+        const platform_fee = totalPrice > 0 ? PLATFORM_FEE_VALUE : 0;
+        const organizer_revenue = totalPrice; // The total event price (exclusive of the extra the client will pay)
+        // Note: The user said: "if event price is 50 then platform fee will be 2 = 52". 
+        // This means total_price stored in DB should probably be 52 for the client records.
+        const total_charged = totalPrice + platform_fee;
+
+        // GCash is "Paid" (Simulation), Person-to-Person is "Pending"
+        const initialStatus = paymentMethod === 'GCash' ? 'Paid' : 'Pending';
+        const platformFeeStatus = paymentMethod === 'GCash' ? 'Paid' : 'Pending';
+
         await pool.query(
-            `INSERT INTO registrations (id, user_id, event_id, ticket_id, quantity, total_price, payment_status, qr_code, device_info)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [reg_id, user_id, event_id, ticketIdToStore, quantity, totalPrice, 'Completed', qr_code, device_info || 'Unknown']
+            `INSERT INTO registrations (id, user_id, event_id, ticket_id, quantity, total_price, payment_status, qr_code, device_info, payment_method, platform_fee, organizer_revenue, platform_fee_status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            [reg_id, user_id, event_id, ticketIdToStore, quantity, total_charged, initialStatus, qr_code, device_info || 'Unknown', paymentMethod, platform_fee, organizer_revenue, platformFeeStatus]
         );
         
         await pool.query('COMMIT');
-        res.status(201).json({ success: true, message: 'Successfully registered for the event', qr_code });
+
+        // Send registration confirmation email
+        const userResult = await pool.query('SELECT email, name FROM users WHERE id = $1', [user_id]);
+        if (userResult.rows.length > 0) {
+            const { email, name } = userResult.rows[0];
+            const eventTitle = eventCheckResult.rows[0].title;
+            // Send email in background (don't wait for it)
+            sendRegistrationConfirmationEmail(email, name, eventTitle, reg_id).catch(err => 
+                console.error('Failed to send confirmation email:', err)
+            );
+        }
+
+        res.status(201).json({ success: true, message: 'Successfully registered for the event', qr_code, payment_status: initialStatus });
     } catch (error) {
         await pool.query('ROLLBACK');
         console.error('Registration error:', error);
@@ -878,6 +1061,21 @@ app.post('/registrations/archive', requireAuth, async (req, res) => {
     }
 
     try {
+        // Check if any event has ended
+        const eventCheck = await pool.query(`
+            SELECT r.id, e.date as event_date FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.id = ANY($1) AND r.user_id = $2
+        `, [ids, user_id]);
+        
+        const pastEventIds = eventCheck.rows
+            .filter(row => new Date(row.event_date) < new Date())
+            .map(row => row.id);
+        
+        if (pastEventIds.length > 0) {
+            return res.status(403).json({ success: false, message: `Cannot archive ${pastEventIds.length} registration(s) from past events` });
+        }
+        
         await pool.query(
             'UPDATE registrations SET is_archived = TRUE WHERE id = ANY($1) AND user_id = $2',
             [ids, user_id]
@@ -903,6 +1101,21 @@ app.post('/registrations/unarchive', requireAuth, async (req, res) => {
     }
 
     try {
+        // Check if any event has ended
+        const eventCheck = await pool.query(`
+            SELECT r.id, e.date as event_date FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.id = ANY($1) AND r.user_id = $2
+        `, [ids, user_id]);
+        
+        const pastEventIds = eventCheck.rows
+            .filter(row => new Date(row.event_date) < new Date())
+            .map(row => row.id);
+        
+        if (pastEventIds.length > 0) {
+            return res.status(403).json({ success: false, message: `Cannot modify ${pastEventIds.length} registration(s) from past events` });
+        }
+        
         const result = await pool.query(
             'UPDATE registrations SET is_archived = FALSE WHERE id = ANY($1) AND user_id = $2',
             [ids, user_id]
@@ -924,12 +1137,24 @@ app.delete('/registrations/:id', requireAuth, async (req, res) => {
     try {
         await pool.query('BEGIN');
         
-        // Find the registration to ensure it exists and belongs to the user
-        const regResult = await pool.query('SELECT ticket_id, quantity FROM registrations WHERE id = $1 AND user_id = $2', [id, user_id]);
+        // Find the registration to ensure it exists and belongs to the user, and check event status
+        const regResult = await pool.query(`
+            SELECT r.ticket_id, r.quantity, e.date as event_date
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.id = $1 AND r.user_id = $2
+        `, [id, user_id]);
         
         if (regResult.rows.length === 0) {
             await pool.query('ROLLBACK');
             return res.status(404).json({ success: false, message: 'Registration not found or unauthorized' });
+        }
+        
+        // Check if event has ended
+        const eventDate = new Date(regResult.rows[0].event_date);
+        if (eventDate < new Date()) {
+            await pool.query('ROLLBACK');
+            return res.status(403).json({ success: false, message: 'Cannot cancel registration for past events' });
         }
         
         const { ticket_id, quantity } = regResult.rows[0];
@@ -967,7 +1192,155 @@ app.get('/my-created-events', requireAdmin, async (req, res) => {
     }
 });
 
+// --- SETTLE PLATFORM FEES (Admin) ---
+app.post('/organizer/settle-fees', requireAdmin, async (req, res) => {
+    const organizerId = req.session.user.id;
+    try {
+        await pool.query(`
+            UPDATE registrations 
+            SET platform_fee_status = 'Paid' 
+            WHERE event_id IN (SELECT id FROM events WHERE organizer_id = $1)
+            AND platform_fee_status = 'Pending'
+        `, [organizerId]);
+        res.status(200).json({ success: true, message: 'Platform fees settled successfully' });
+    } catch (error) {
+        console.error('Settle fees error:', error);
+        res.status(500).json({ success: false, message: 'Failed to settle fees' });
+    }
+});
+
 // --- ADMIN REPORTS ---
+// --- ORGANIZER REVENUE & FINANCIALS ---
+app.get('/organizer/revenue', requireAdmin, async (req, res) => {
+    const organizerId = req.session.user.id;
+    try {
+        const stats = await pool.query(`
+            SELECT 
+                COUNT(r.id) as total_registrations,
+                COALESCE(SUM(r.organizer_revenue), 0) as total_earnings,
+                COALESCE(SUM(r.platform_fee), 0) as total_deducted,
+                COALESCE(SUM(CASE WHEN r.platform_fee_status = 'Pending' THEN r.platform_fee ELSE 0 END), 0) as pending_platform_debt,
+                COALESCE(SUM(CASE WHEN r.payment_status = 'Pending' THEN r.organizer_revenue ELSE 0 END), 0) as pending_earnings,
+                COALESCE(SUM(CASE WHEN r.payment_status = 'Paid' THEN r.organizer_revenue ELSE 0 END), 0) as collected_earnings
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE e.organizer_id = $1
+        `, [organizerId]);
+
+        // Get previous month earnings for percentage comparison
+        const prevMonthStats = await pool.query(`
+            SELECT 
+                COALESCE(SUM(r.organizer_revenue), 0) as prev_month_earnings
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE e.organizer_id = $1
+            AND r.purchased_at >= NOW() - INTERVAL '2 months'
+            AND r.purchased_at < NOW() - INTERVAL '1 month'
+        `, [organizerId]);
+
+        const transactions = await pool.query(`
+            SELECT 
+                r.id, r.purchased_at, r.payment_method, r.payment_status, r.platform_fee_status, r.total_price, r.platform_fee, r.organizer_revenue,
+                e.title as event_title, e.date as event_date,
+                u.name as user_name
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            JOIN users u ON r.user_id = u.id
+            WHERE e.organizer_id = $1
+            ORDER BY r.purchased_at DESC
+            LIMIT 50
+        `, [organizerId]);
+
+        const currentEarnings = parseFloat(stats.rows[0].total_earnings) || 0;
+        const prevMonthEarnings = parseFloat(prevMonthStats.rows[0].prev_month_earnings) || 0;
+        
+        let percentageChange = 0;
+        if (prevMonthEarnings > 0) {
+            percentageChange = ((currentEarnings - prevMonthEarnings) / prevMonthEarnings * 100).toFixed(1);
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            summary: { 
+                ...stats.rows[0],
+                percentage_change: parseFloat(percentageChange)
+            }, 
+            transactions: transactions.rows 
+        });
+    } catch (error) {
+        console.error('Fetch organizer revenue error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch financial data' });
+    }
+});
+
+// --- SUPER ADMIN GLOBAL PAYMENTS ---
+app.get('/super/platform-revenue', requireSuperAdmin, async (req, res) => {
+    try {
+        const globalStats = await pool.query(`
+            SELECT 
+                COUNT(id) as total_transactions,
+                COALESCE(SUM(platform_fee), 0) as total_platform_earnings,
+                COALESCE(SUM(CASE WHEN platform_fee_status = 'Paid' THEN platform_fee ELSE 0 END), 0) as collected_platform_fees,
+                COALESCE(SUM(CASE WHEN platform_fee_status = 'Pending' THEN platform_fee ELSE 0 END), 0) as pending_platform_fees,
+                COALESCE(SUM(organizer_revenue), 0) as total_organizer_payouts,
+                COALESCE(SUM(total_price), 0) as total_gross_volume
+            FROM registrations
+            WHERE total_price > 0
+        `);
+
+        const recentPayments = await pool.query(`
+            SELECT 
+                r.id, r.purchased_at, r.platform_fee, r.platform_fee_status, r.payment_method, r.total_price,
+                e.title as event_title,
+                u.name as organizer_name
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            JOIN users u ON e.organizer_id = u.id
+            WHERE r.total_price > 0
+            ORDER BY r.purchased_at DESC
+            LIMIT 100
+        `);
+
+        res.status(200).json({ 
+            success: true, 
+            summary: globalStats.rows[0], 
+            payments: recentPayments.rows 
+        });
+    } catch (error) {
+        console.error('Fetch global revenue error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch global payment data' });
+    }
+});
+
+// --- CONFIRM PAYMENT (ADMIN ONLY) ---
+app.patch('/registrations/:id/confirm-payment', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const organizerId = req.session.user.id;
+    try {
+        // Verify ownership through event and check event status
+        const check = await pool.query(`
+            SELECT r.id, e.date as event_date
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.id = $1 AND e.organizer_id = $2
+        `, [id, organizerId]);
+
+        if (check.rows.length === 0) return res.status(403).json({ success: false, message: 'Unauthorized or registration not found' });
+        
+        // Check if event has ended
+        const eventDate = new Date(check.rows[0].event_date);
+        if (eventDate < new Date()) {
+            return res.status(403).json({ success: false, message: 'Cannot update payment for past events' });
+        }
+
+        await pool.query("UPDATE registrations SET payment_status = 'Paid' WHERE id = $1", [id]);
+        res.status(200).json({ success: true, message: 'Payment confirmed successfully' });
+    } catch (error) {
+        console.error('Confirm payment error:', error);
+        res.status(500).json({ success: false, message: 'Failed to confirm payment' });
+    }
+});
+
 app.get('/admin/stats', requireAdmin, async (req, res) => {
     try {
         const organizerId = req.session.user.id;
@@ -979,7 +1352,7 @@ app.get('/admin/stats', requireAdmin, async (req, res) => {
         
         // Total registrations and active registrations (for upcoming events) for THIS organizer
         const totalRegsCount = await pool.query(`
-            SELECT COUNT(*), SUM(total_price) as revenue 
+            SELECT COUNT(*), SUM(organizer_revenue) as revenue 
             FROM registrations r
             JOIN events e ON r.event_id = e.id
             WHERE e.organizer_id = $1
@@ -1007,7 +1380,556 @@ app.get('/admin/stats', requireAdmin, async (req, res) => {
     }
 });
 
+// --- PAYMENT STATUS UPDATE (Admin) ---
+app.patch('/registrations/:id/payment-status', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { payment_status, platform_fee_status } = req.body;
+    const organizerId = req.session.user.id;
+    const userRole = req.session.user.roleName;
 
+    const validStatuses = ['Paid', 'Pending', 'Cancelled'];
+    if (!validStatuses.includes(payment_status)) {
+        return res.status(400).json({ success: false, message: 'Invalid payment status. Must be Paid, Pending, or Cancelled.' });
+    }
+
+    if (platform_fee_status && !['Paid', 'Pending'].includes(platform_fee_status)) {
+        return res.status(400).json({ success: false, message: 'Invalid platform fee status. Must be Paid or Pending.' });
+    }
+
+    try {
+        // Verify the registration belongs to an event owned by this organizer (Super Admin bypasses this)
+        let eventCheckQuery = `
+            SELECT r.id, e.date as event_date FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.id = $1
+        `;
+        let queryParams = [id];
+        
+        if (userRole !== 'Super Admin') {
+            eventCheckQuery += ` AND e.organizer_id = $2`;
+            queryParams.push(organizerId);
+        }
+        
+        const regCheck = await pool.query(eventCheckQuery, queryParams);
+
+        if (regCheck.rows.length === 0) {
+            return res.status(403).json({ success: false, message: 'Registration not found or unauthorized' });
+        }
+        
+        // Check if event has ended
+        const eventDate = new Date(regCheck.rows[0].event_date);
+        if (eventDate < new Date()) {
+            return res.status(403).json({ success: false, message: 'Cannot update payment status for past events' });
+        }
+
+        if (platform_fee_status) {
+            await pool.query('UPDATE registrations SET payment_status = $1, platform_fee_status = $2 WHERE id = $3', [payment_status, platform_fee_status, id]);
+        } else {
+            await pool.query('UPDATE registrations SET payment_status = $1 WHERE id = $2', [payment_status, id]);
+        }
+
+        res.status(200).json({ success: true, message: `Payment status updated to ${payment_status}` });
+    } catch (error) {
+        console.error('Payment status update error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update payment status' });
+    }
+});
+
+// --- BATCH PAYMENT STATUS UPDATE (Admin) ---
+app.post('/registrations/batch-payment-status', requireAdmin, async (req, res) => {
+    const { registrationIds, payment_status, platform_fee_status } = req.body;
+    const organizerId = req.session.user.id;
+    const userRole = req.session.user.roleName;
+
+    const validStatuses = ['Paid', 'Pending', 'Cancelled'];
+    if (!validStatuses.includes(payment_status)) {
+        return res.status(400).json({ success: false, message: 'Invalid payment status.' });
+    }
+
+    if (platform_fee_status && !['Paid', 'Pending'].includes(platform_fee_status)) {
+        return res.status(400).json({ success: false, message: 'Invalid platform fee status.' });
+    }
+    
+    if (!Array.isArray(registrationIds) || registrationIds.length === 0) {
+        return res.status(400).json({ success: false, message: 'No registrations provided.' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        let validIds = registrationIds;
+        
+        // If not super admin, filter out ids that don't belong to their events and check for past events
+        let regCheckQuery = `
+            SELECT r.id, e.date as event_date FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.id = ANY($1)
+        `;
+        let queryParams = [registrationIds];
+        
+        if (userRole !== 'Super Admin') {
+            regCheckQuery += ` AND e.organizer_id = $2`;
+            queryParams.push(organizerId);
+        }
+        
+        const regCheck = await client.query(regCheckQuery, queryParams);
+        
+        if (regCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ success: false, message: 'Unauthorized for these registrations' });
+        }
+        
+        // Check if any event has ended
+        const pastEventIds = regCheck.rows
+            .filter(row => new Date(row.event_date) < new Date())
+            .map(row => row.id);
+        
+        if (pastEventIds.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ success: false, message: `Cannot update payment status for ${pastEventIds.length} registration(s) from past events` });
+        }
+        
+        validIds = regCheck.rows.map(row => row.id);
+
+        if (platform_fee_status) {
+            await client.query('UPDATE registrations SET payment_status = $1, platform_fee_status = $2 WHERE id = ANY($3)', [payment_status, platform_fee_status, validIds]);
+        } else {
+            await client.query('UPDATE registrations SET payment_status = $1 WHERE id = ANY($2)', [payment_status, validIds]);
+        }
+        
+        await client.query('COMMIT');
+        
+        res.status(200).json({ 
+            success: true, 
+            message: `Updated ${validIds.length} registration(s) to ${payment_status}`,
+            updatedIds: validIds
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Batch update error:', error);
+        res.status(500).json({ success: false, message: 'Failed to batch update payment status' });
+    } finally {
+        client.release();
+    }
+});
+
+// --- SUPER ADMIN EVENT MANAGEMENT ---
+app.get('/super/events', requireSuperAdmin, async (req, res) => {
+    try {
+        const eventsResult = await pool.query(`
+            SELECT 
+                e.id,
+                e.title,
+                e.date,
+                e.location,
+                u.name as organizer_name,
+                COUNT(r.id) as total_registrations
+            FROM events e
+            LEFT JOIN users u ON e.organizer_id = u.id
+            LEFT JOIN registrations r ON r.event_id = e.id
+            GROUP BY 
+                e.id,
+                e.title,
+                e.date,
+                e.location,
+                u.name
+            ORDER BY e.date DESC
+        `);
+
+        res.status(200).json({
+            success: true,
+            events: eventsResult.rows
+        });
+    } catch (error) {
+        console.error('Fetch all events error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch global events' });
+    }
+});
+
+// --- QR CODE CHECK-IN SYSTEM ---
+
+// Generate QR code for event (organizer only)
+app.post('/events/:id/generate-qr', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const organizerId = req.session.user.id;
+    
+    try {
+        // Verify event belongs to organizer
+        const eventResult = await pool.query(
+            'SELECT id, title FROM events WHERE id = $1 AND organizer_id = $2',
+            [id, organizerId]
+        );
+        
+        if (eventResult.rows.length === 0) {
+            return res.status(403).json({ success: false, message: 'Event not found or unauthorized' });
+        }
+        
+        // Create QR data as a clickable URL that opens the scanner
+        // Use PUBLIC_URL from env if available, otherwise construct from request
+        let baseUrl = process.env.PUBLIC_URL;
+        if (!baseUrl) {
+            const protocol = req.protocol || 'http';
+            const host = req.get('host');
+            baseUrl = `${protocol}://${host}`;
+        }
+        
+        const qrUrl = `${baseUrl}/scanner?eventId=${id}`;
+        
+        // Generate QR code as data URL
+        const qrCode = await QRCode.toDataURL(qrUrl, {
+            errorCorrectionLevel: 'H',
+            type: 'image/png',
+            width: 300,
+            margin: 1,
+            color: {
+                dark: '#000000',
+                light: '#ffffff'
+            }
+        });
+        
+        res.status(200).json({
+            success: true,
+            qrCode: qrCode,
+            eventId: id,
+            eventTitle: eventResult.rows[0].title,
+            scanUrl: qrUrl
+        });
+    } catch (error) {
+        console.error('QR generation error:', error);
+        res.status(500).json({ success: false, message: 'Failed to generate QR code' });
+    }
+});
+
+// Mark attendee as checked in (scanner/organizer)
+app.post('/registrations/:id/check-in', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const userId = req.session.user.id;
+    
+    try {
+        // Check if registration exists
+        const regResult = await pool.query(
+            `SELECT r.id, r.event_id, e.organizer_id, r.user_id 
+             FROM registrations r
+             JOIN events e ON r.event_id = e.id
+             WHERE r.id = $1`,
+            [id]
+        );
+        
+        if (regResult.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Registration not found' });
+        }
+        
+        const registration = regResult.rows[0];
+        
+        // Verify user is organizer or admin
+        const userResult = await pool.query(
+            'SELECT role_id FROM users WHERE id = $1',
+            [userId]
+        );
+        
+        const roleId = userResult.rows[0].role_id;
+        const isOrganizerOrAdmin = registration.organizer_id === userId || roleId === 2 || roleId === 3;
+        
+        if (!isOrganizerOrAdmin) {
+            return res.status(403).json({ success: false, message: 'Not authorized to check in attendees' });
+        }
+        
+        // Check if already checked in
+        const checkInResult = await pool.query(
+            'SELECT id FROM check_ins WHERE registration_id = $1',
+            [id]
+        );
+        
+        if (checkInResult.rows.length > 0) {
+            return res.status(400).json({ success: false, message: 'Already checked in' });
+        }
+        
+        // Insert check-in record
+        await pool.query(
+            `INSERT INTO check_ins (registration_id, checked_in_by)
+             VALUES ($1, $2)`,
+            [id, userId]
+        );
+        
+        // Get attendee info
+        const attendeeResult = await pool.query(
+            `SELECT u.name, u.email FROM registrations r
+             JOIN users u ON r.user_id = u.id
+             WHERE r.id = $1`,
+            [id]
+        );
+        
+        const attendeeName = attendeeResult.rows[0].name;
+        const attendeeEmail = attendeeResult.rows[0].email;
+        
+        // Get event title
+        const eventResult = await pool.query('SELECT title FROM events WHERE id = $1', [registration.event_id]);
+        const eventTitle = eventResult.rows[0].title;
+        
+        // Send check-in confirmation email in background
+        sendCheckInConfirmationEmail(attendeeEmail, attendeeName, eventTitle).catch(err =>
+            console.error('Failed to send check-in confirmation email:', err)
+        );
+        
+        res.status(200).json({
+            success: true,
+            message: `${attendeeName} checked in successfully!`,
+            attendeeName: attendeeName
+        });
+    } catch (error) {
+        console.error('Check-in error:', error.message);
+        console.error('Full error:', error);
+        res.status(500).json({ success: false, message: 'Failed to check in attendee: ' + error.message });
+    }
+});
+
+// Mobile Check-In Endpoint (for scanner - no auth required)
+app.post('/registrations/:id/mobile-check-in', async (req, res) => {
+    const { id } = req.params;
+    const { eventId } = req.body;
+    
+    console.log('🔵 Mobile Check-In Request:', { registrationId: id, eventId });
+    
+    try {
+        // First, check if registration exists and matches event (if eventId provided)
+        let query = `
+            SELECT r.id, r.event_id, r.user_id, e.title
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+            WHERE (r.id::text = LOWER($1) OR r.qr_code = $1)
+        `;
+        let params = [id];
+
+        if (eventId) {
+            query += ' AND r.event_id = $2';
+            params.push(eventId);
+        }
+
+        const regResult = await pool.query(query, params);
+        
+        if (regResult.rows.length === 0) {
+            console.log('❌ Registration not found or mismatch for ID:', id);
+            return res.status(404).json({ 
+                success: false, 
+                message: eventId 
+                    ? 'Ticket ID not found for this event. Check your ID.' 
+                    : 'Registration not found. Check your ID.' 
+            });
+        }
+        
+        const registration = regResult.rows[0];
+        console.log('✓ Registration found:', { id: registration.id, eventTitle: registration.title });
+        
+        // Check if already checked in
+        const checkInResult = await pool.query(
+            'SELECT id FROM check_ins WHERE registration_id = $1',
+            [registration.id]
+        );
+        
+        if (checkInResult.rows.length > 0) {
+            console.log('❌ Already checked in:', registration.id);
+            return res.status(400).json({ success: false, message: 'This ticket has already been checked in.' });
+        }
+        
+        // Insert check-in record
+        await pool.query(
+            `INSERT INTO check_ins (registration_id, checked_in_by)
+             VALUES ($1, NULL)`,
+            [registration.id]
+        );
+        
+        // Get attendee info
+        const attendeeResult = await pool.query(
+            `SELECT u.name, u.email FROM users u WHERE u.id = $1`,
+            [registration.user_id]
+        );
+        
+        if (attendeeResult.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+        
+        const attendeeName = attendeeResult.rows[0].name;
+        const attendeeEmail = attendeeResult.rows[0].email;
+        const eventTitle = registration.title;
+        
+        // Send check-in confirmation email in background
+        sendCheckInConfirmationEmail(attendeeEmail, attendeeName, eventTitle).catch(err =>
+            console.error('Failed to send check-in confirmation email:', err)
+        );
+
+        res.status(200).json({
+            success: true,
+            message: `✓ ${attendeeName} checked in successfully!`,
+            attendeeName: attendeeName
+        });
+    } catch (error) {
+        console.error('❌ Mobile check-in error:', error.message);
+        console.error('Full error:', error);
+        res.status(500).json({ success: false, message: 'Error: ' + error.message });
+    }
+});
+
+// Get attendance stats for event (organizer only)
+app.get('/events/:id/attendance', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const organizerId = req.session.user.id;
+    
+    try {
+        // Verify event belongs to organizer
+        const eventCheck = await pool.query(
+            'SELECT id FROM events WHERE id = $1 AND organizer_id = $2',
+            [id, organizerId]
+        );
+        
+        if (eventCheck.rows.length === 0) {
+            return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+        
+        // Get total registrations
+        const totalResult = await pool.query(
+            'SELECT COUNT(*) as total FROM registrations WHERE event_id = $1',
+            [id]
+        );
+        
+        // Get checked-in count
+        const checkedInResult = await pool.query(
+            `SELECT COUNT(*) as checked_in FROM check_ins ci
+             JOIN registrations r ON ci.registration_id = r.id
+             WHERE r.event_id = $1`,
+            [id]
+        );
+        
+        // Get checked-in attendees list
+        const attendeesResult = await pool.query(
+            `SELECT 
+                u.name,
+                r.id as registration_id,
+                ci.checked_in_at,
+                checker.name as checked_in_by
+            FROM check_ins ci
+            JOIN registrations r ON ci.registration_id = r.id
+            JOIN users u ON r.user_id = u.id
+            JOIN events e ON r.event_id = e.id
+            LEFT JOIN users checker ON ci.checked_in_by = checker.id
+            WHERE e.id = $1
+            ORDER BY ci.checked_in_at DESC`,
+            [id]
+        );
+        
+        const total = parseInt(totalResult.rows[0].total);
+        const checkedIn = parseInt(checkedInResult.rows[0].checked_in);
+        const attendanceRate = total > 0 ? ((checkedIn / total) * 100).toFixed(1) : 0;
+        
+        res.status(200).json({
+            success: true,
+            stats: {
+                totalRegistrations: total,
+                checkedInCount: checkedIn,
+                notCheckedIn: total - checkedIn,
+                attendanceRate: attendanceRate
+            },
+            attendees: attendeesResult.rows
+        });
+    } catch (error) {
+        console.error('Attendance stats error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch attendance data' });
+    }
+});
+
+// Resend registration confirmation email
+app.post('/registrations/:id/resend-email', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const userId = req.session.user.id;
+    
+    try {
+        // Get registration details
+        const regResult = await pool.query(
+            `SELECT r.id, r.user_id, r.event_id, e.title, u.name, u.email
+             FROM registrations r
+             JOIN events e ON r.event_id = e.id
+             JOIN users u ON r.user_id = u.id
+             WHERE r.id = $1`,
+            [id]
+        );
+        
+        if (regResult.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Registration not found' });
+        }
+        
+        const registration = regResult.rows[0];
+        
+        // Only the registered user or an admin can request resend
+        if (userId !== registration.user_id && req.session.user.roleName !== 'Admin' && req.session.user.roleName !== 'Super Admin') {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+        
+        // Send confirmation email
+        await sendRegistrationConfirmationEmail(registration.email, registration.name, registration.title, registration.id);
+        
+        res.status(200).json({
+            success: true,
+            message: `Confirmation email resent to ${registration.email}`
+        });
+    } catch (error) {
+        console.error('Resend email error:', error);
+        res.status(500).json({ success: false, message: 'Failed to resend email' });
+    }
+});
+
+app.delete('/super/events/:id', requireSuperAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Let the DB CASCADE delete related tickets, registrations, ratings, constraints
+        const deleteResult = await pool.query('DELETE FROM events WHERE id = $1 RETURNING id', [id]);
+        
+        if (deleteResult.rowCount === 0) {
+            return res.status(404).json({ success: false, message: 'Event not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'Event permanently deleted from platform' });
+    } catch (error) {
+        console.error('Super Admin Delete event error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete event globally' });
+    }
+});
+
+// --- PLATFORM CONFIGURATION APIs ---
+app.get('/platform/config', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT key, value FROM platform_settings');
+        const config = {};
+        result.rows.forEach(row => {
+            config[row.key] = row.value;
+        });
+        res.status(200).json({ success: true, config });
+    } catch (error) {
+        console.error('Fetch platform config error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch platform configuration' });
+    }
+});
+
+app.patch('/super/config', requireSuperAdmin, async (req, res) => {
+    const { platform_fee } = req.body;
+    
+    if (platform_fee !== undefined) {
+        const fee = parseFloat(platform_fee);
+        if (isNaN(fee) || fee < 0 || fee > 100) {
+            return res.status(400).json({ success: false, message: 'Invalid platform fee. Must be between 0 and 100.' });
+        }
+        
+        try {
+            await pool.query("INSERT INTO platform_settings (key, value) VALUES ('platform_fee', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [fee.toFixed(2)]);
+            return res.status(200).json({ success: true, message: 'Platform configuration updated successfully' });
+        } catch (error) {
+            console.error('Update platform config error:', error);
+            return res.status(500).json({ success: false, message: 'Failed to update platform configuration' });
+        }
+    }
+    
+    res.status(400).json({ success: false, message: 'No valid setting provided' });
+});
 
 // --- AUTO-MIGRATION: Ensure dynamic columns exist ---
 const runMigrations = async () => {
@@ -1036,7 +1958,20 @@ const runMigrations = async () => {
 
     await ensureColumn('registrations', 'is_archived', 'BOOLEAN DEFAULT FALSE');
     await ensureColumn('registrations', 'device_info', 'VARCHAR(255)');
+    await ensureColumn('registrations', 'platform_fee_status', "VARCHAR(20) DEFAULT 'Pending'");
+    await ensureColumn('registrations', 'platform_fee', 'DECIMAL(10,2) DEFAULT 0');
+    await ensureColumn('registrations', 'organizer_revenue', 'DECIMAL(10,2) DEFAULT 0');
     await ensureColumn('events', 'additional_images', "JSONB DEFAULT '[]'::jsonb");
+    
+    // Backfill platform_fee_status for GCash
+    try {
+        await pool.query("UPDATE registrations SET platform_fee_status = 'Paid' WHERE payment_method = 'GCash' AND platform_fee_status = 'Pending'");
+        await pool.query("UPDATE registrations SET platform_fee = 2.00, organizer_revenue = total_price - 2.00 WHERE payment_method = 'GCash' AND platform_fee = 0 AND total_price >= 2.00");
+        await pool.query("UPDATE registrations SET platform_fee = 2.00, organizer_revenue = total_price WHERE (payment_method IS NULL OR payment_method != 'GCash') AND platform_fee = 0 AND total_price > 0");
+        console.log("Migration check: Backfilled platform_fee and status for existing registrations.");
+    } catch (e) {
+        console.error("Migration backfill status error:", e.message);
+    }
     
     // Ensure Reviews Table EXISTS
     try {
@@ -1055,7 +1990,22 @@ const runMigrations = async () => {
     } catch (e) {
         console.error("Migration event_reviews table error:", e.message);
     }
+
+    // Ensure Platform Settings Table EXISTS
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS platform_settings (
+                key VARCHAR(50) PRIMARY KEY,
+                value VARCHAR(255)
+            )
+        `);
+        await pool.query("INSERT INTO platform_settings (key, value) VALUES ('platform_fee', '2.00') ON CONFLICT (key) DO NOTHING");
+        console.log("Migration check: platform_settings table ensured.");
+    } catch (e) {
+        console.error("Migration platform_settings table error:", e.message);
+    }
 };
+
 
 // --- AUTO-CLEANUP ---
 const cleanupOldRegistrations = async () => {

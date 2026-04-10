@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Mail, Phone, User as UserIcon, Lock, BookOpen } from 'lucide-react';
 
 export default function Register() {
   const [formData, setFormData] = useState({
-    username: '',
     name: '',
+    username: '',
+    emailAddress: '',
+    phoneNumber: '',
     password: '',
     roleName: 'User',
     bio: ''
@@ -36,6 +38,8 @@ export default function Register() {
     
     const data = new FormData();
     data.append('username', formData.username);
+    data.append('emailAddress', formData.emailAddress);
+    data.append('phoneNumber', formData.phoneNumber);
     data.append('name', formData.name);
     data.append('password', formData.password);
     data.append('roleName', formData.roleName);
@@ -45,11 +49,7 @@ export default function Register() {
     }
 
     try {
-      await axios.post(`${import.meta.env.VITE_API_URL}/register`, data, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
+      await axios.post(`${import.meta.env.VITE_API_URL}/register`, data);
       navigate('/login');
     } catch (error) {
       console.error("Registration full error:", error);
@@ -102,39 +102,93 @@ export default function Register() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Full Name</label>
-            <input
-              type="text"
-              required
-              value={formData.name}
-              onChange={(e) => setFormData({...formData, name: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-zinc-600 focus:bg-zinc-800 transition-all text-sm text-white placeholder-zinc-500"
-              placeholder="Jane Doe"
-            />
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5 font-semibold">Full Name</label>
+            <div className="relative group">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                <UserIcon size={18} />
+              </div>
+              <input
+                type="text"
+                name="name"
+                required
+                value={formData.name}
+                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                className="w-full pl-12 pr-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/20 focus:border-[#ffdd95]/50 focus:bg-zinc-800/50 transition-all text-sm text-white placeholder-zinc-600"
+                placeholder="Jane Doe"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-zinc-300 mb-1.5 font-semibold">Username</label>
+              <div className="relative group">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                  <UserIcon size={16} />
+                </div>
+                <input
+                  type="text"
+                  name="username"
+                  required
+                  value={formData.username}
+                  onChange={(e) => setFormData({...formData, username: e.target.value})}
+                  className="w-full pl-11 pr-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/20 focus:border-[#ffdd95]/50 focus:bg-zinc-800/50 transition-all text-sm text-white placeholder-zinc-600"
+                  placeholder="jane.doe99"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-300 mb-1.5 font-semibold">Email</label>
+              <div className="relative group">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                  <Mail size={16} />
+                </div>
+                <input
+                  type="email"
+                  name="emailAddress"
+                  required
+                  value={formData.emailAddress}
+                  onChange={(e) => setFormData({...formData, emailAddress: e.target.value})}
+                  className="w-full pl-11 pr-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/20 focus:border-[#ffdd95]/50 focus:bg-zinc-800/50 transition-all text-sm text-white placeholder-zinc-600"
+                  placeholder="jane@example.com"
+                />
+              </div>
+            </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Username</label>
-            <input
-              type="text"
-              required
-              value={formData.username}
-              onChange={(e) => setFormData({...formData, username: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-zinc-600 focus:bg-zinc-800 transition-all text-sm text-white placeholder-zinc-500"
-              placeholder="jane.doe99"
-            />
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5 font-semibold">Phone Number</label>
+            <div className="relative group">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                <Phone size={18} />
+              </div>
+              <input
+                type="tel"
+                name="phoneNumber"
+                required
+                value={formData.phoneNumber}
+                onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})}
+                className="w-full pl-12 pr-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/20 focus:border-[#ffdd95]/50 focus:bg-zinc-800/50 transition-all text-sm text-white placeholder-zinc-600"
+                placeholder="+63 9xx xxxx xxx"
+              />
+            </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Password</label>
-            <input
-              type="password"
-              required
-              value={formData.password}
-              onChange={(e) => setFormData({...formData, password: e.target.value})}
-              className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-zinc-600 focus:bg-zinc-800 transition-all text-sm text-white placeholder-zinc-500"
-              placeholder="••••••••"
-            />
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5 font-semibold">Password</label>
+            <div className="relative group">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                <Lock size={18} />
+              </div>
+              <input
+                type="password"
+                required
+                value={formData.password}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                className="w-full pl-12 pr-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/20 focus:border-[#ffdd95]/50 focus:bg-zinc-800/50 transition-all text-sm text-white placeholder-zinc-600"
+                placeholder="••••••••"
+              />
+            </div>
           </div>
 
           <div>

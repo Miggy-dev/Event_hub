@@ -57,8 +57,39 @@ CREATE TABLE registrations (
     payment_status VARCHAR(50) DEFAULT 'Pending',
     qr_code VARCHAR(255),
     is_archived BOOLEAN DEFAULT FALSE,
-    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    device_info TEXT,
+    payment_method VARCHAR(50) DEFAULT 'Person-to-Person',
+    platform_fee DECIMAL(10, 2) DEFAULT 0.00,
+    organizer_revenue DECIMAL(10, 2) DEFAULT 0.00,
+    platform_fee_status VARCHAR(50) DEFAULT 'Pending'
 );
+
+CREATE TABLE IF NOT EXISTS check_ins (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    registration_id UUID NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
+    checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    checked_in_by UUID REFERENCES users(id),
+    UNIQUE(registration_id)
+);
+
+CREATE TABLE IF NOT EXISTS event_reviews (
+    id UUID PRIMARY KEY,
+    event_id UUID REFERENCES events(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+    comment TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (event_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS platform_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Seed initial settings
+INSERT INTO platform_settings (key, value) VALUES ('platform_fee', '2.00') ON CONFLICT DO NOTHING;
 
 -- Seed roles
 INSERT INTO roles (name) VALUES ('Admin'), ('User') ON CONFLICT DO NOTHING;

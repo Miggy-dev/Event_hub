@@ -201,6 +201,16 @@ export default function Home() {
                                         <div className="absolute top-4 left-4 bg-zinc-900/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-zinc-100 shadow-sm border border-zinc-800">
                                             {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                         </div>
+                                        {parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0 && (
+                                            <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-10">
+                                                <span className="bg-red-600 text-white font-black text-sm px-4 py-2 rounded-lg rotate-[-12deg] shadow-2xl border-2 border-red-500 tracking-tighter uppercase">FULLY BOOKED</span>
+                                            </div>
+                                        )}
+                                        {parseInt(event.ticket_tier_count) === 0 && (
+                                            <div className="absolute top-4 right-4 bg-green-500 text-white text-[10px] font-black px-2 py-1 rounded shadow-lg uppercase tracking-tighter z-10 border border-green-400">
+                                                FREE
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="p-5 flex-1 flex flex-col">
                                         <h3 className="text-xl font-bold text-white mb-2 truncate group-hover:text-zinc-300 transition-colors">{event.title}</h3>
@@ -450,6 +460,16 @@ export default function Home() {
                                                 <div className="absolute top-2 right-2 bg-[#ffdd95]/90 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 uppercase tracking-wider">
                                                     Your Event
                                                 </div>
+                                                {parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0 && (
+                                                    <div className="absolute inset-0 bg-red-950/40 backdrop-blur-[1px] flex items-center justify-center z-10">
+                                                        <span className="bg-red-600 text-white font-black text-[10px] px-2 py-1 rounded rotate-[-10deg] shadow-lg border border-red-500">FULLY BOOKED</span>
+                                                    </div>
+                                                )}
+                                                {parseInt(event.ticket_tier_count) === 0 && (
+                                                    <div className="absolute top-2 right-12 bg-green-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-sm z-10 shadow-md">
+                                                        FREE
+                                                    </div>
+                                                )}
                                                 <div className={`absolute bottom-2 left-2 text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10 ${
                                                     event.status === 'Published' ? 'bg-green-500/90 text-white' : 'bg-zinc-600/90 text-zinc-200'
                                                 }`}>
@@ -573,6 +593,16 @@ export default function Home() {
                                         <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-sm z-10 border border-white/10">
                                             {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                         </div>
+                                        {parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0 && (
+                                            <div className="absolute inset-0 bg-red-950/40 backdrop-blur-[1px] flex items-center justify-center z-10">
+                                                <span className="bg-red-600 text-white font-black text-[10px] px-2 py-1 rounded rotate-[-10deg] shadow-lg border border-red-500">FULLY BOOKED</span>
+                                            </div>
+                                        )}
+                                        {parseInt(event.ticket_tier_count) === 0 && (
+                                            <div className="absolute top-2 right-2 bg-green-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-sm z-10 shadow-md">
+                                                FREE
+                                            </div>
+                                        )}
                                         <div className="absolute bottom-2 right-2 bg-[#ffdd95] text-black text-[10px] font-extrabold px-1.5 py-0.5 rounded-sm z-10">
                                             {event.capacity} SEATS
                                         </div>
