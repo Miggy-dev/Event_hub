@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { User as UserIcon, Camera, Save, CheckCircle2, AlertCircle, ArrowLeft, Shield } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { User as UserIcon, Camera, Save, CheckCircle2, AlertCircle, ArrowLeft, Shield, Mail, Phone, Lock } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Profile() {
+    const navigate = useNavigate();
     const [user, setUser] = useState(null);
     const [formData, setFormData] = useState({
         name: '',
-        bio: ''
+        bio: '',
+        emailAddress: '',
+        phoneNumber: ''
     });
     const [profileImage, setProfileImage] = useState(null);
     const [imagePreview, setImagePreview] = useState(null);
@@ -32,14 +35,21 @@ export default function Profile() {
                     setUser(u);
                     setFormData({
                         name: u.name || '',
-                        bio: u.bio || ''
+                        bio: u.bio || '',
+                        emailAddress: u.email || '',
+                        phoneNumber: u.phone || ''
                     });
                     if (u.profile_image) {
                         setImagePreview(`${import.meta.env.VITE_API_URL}/uploads/${u.profile_image}`);
                     }
+                } else {
+                    navigate('/login');
                 }
             } catch (error) {
                 console.error("Failed to fetch user data", error);
+                if (error.response?.status === 401 || error.response?.status === 403) {
+                    navigate('/login');
+                }
             } finally {
                 setLoading(false);
             }
@@ -67,6 +77,8 @@ export default function Profile() {
         const data = new FormData();
         data.append('name', formData.name);
         data.append('bio', formData.bio);
+        data.append('emailAddress', formData.emailAddress);
+        data.append('phoneNumber', formData.phoneNumber);
         if (profileImage) {
             data.append('profile_image', profileImage);
         }
@@ -136,14 +148,15 @@ export default function Profile() {
             </div>
 
             <div className="space-y-8">
+                {/* Flash Message (Floating Toast) */}
                 {flashMessage.text && (
-                    <div className={`p-4 rounded-xl border flex items-center gap-3 animate-fadeIn shadow-lg sticky top-20 z-30 ${
+                    <div className={`fixed top-6 right-6 z-[100] p-4 rounded-2xl border flex items-center gap-3 shadow-[0_8px_30px_rgb(0,0,0,0.5)] backdrop-blur-xl animate-fadeIn ${
                         flashMessage.type === 'success' 
-                            ? 'bg-green-950/40 border-green-500/50 text-green-400 backdrop-blur-md' 
-                            : 'bg-red-950/40 border-red-500/50 text-red-400 backdrop-blur-md'
+                            ? 'bg-green-950/90 border-green-500/30 text-green-400' 
+                            : 'bg-red-950/90 border-red-500/30 text-red-400'
                     }`}>
-                        {flashMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                        <span className="font-medium text-sm">{flashMessage.text}</span>
+                        {flashMessage.type === 'success' ? <CheckCircle2 size={20} className="drop-shadow-md" /> : <AlertCircle size={20} className="drop-shadow-md" />}
+                        <span className="font-bold text-sm tracking-wide drop-shadow-sm">{flashMessage.text}</span>
                     </div>
                 )}
 
@@ -179,24 +192,77 @@ export default function Profile() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label className="block text-sm font-semibold text-zinc-400 mb-2">Full Name</label>
-                                    <input 
-                                        type="text" 
-                                        value={formData.name}
-                                        onChange={(e) => setFormData({...formData, name: e.target.value})}
-                                        required
-                                        className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/50 transition-all"
-                                        placeholder="Jane Doe"
-                                    />
+                                    <div className="relative group">
+                                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                                            <UserIcon size={18} />
+                                        </div>
+                                        <input 
+                                            type="text" 
+                                            name="name"
+                                            value={formData.name}
+                                            onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                            required
+                                            className="w-full pl-12 pr-4 py-3.5 bg-zinc-800 border border-zinc-700 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/30 focus:border-[#ffdd95]/50 transition-all shadow-inner"
+                                            placeholder="Jane Doe"
+                                        />
+                                    </div>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Username</label>
-                                    <input 
-                                        type="text" 
-                                        value={user?.username || ''} 
-                                        disabled 
-                                        className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-500 cursor-not-allowed font-bold" 
-                                    />
-                                    <p className="text-[10px] text-zinc-600 mt-1.5 ml-1">Username cannot be changed.</p>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Email Address</label>
+                                    <div className="relative group">
+                                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                                            <Mail size={18} />
+                                        </div>
+                                        <input 
+                                            type="email" 
+                                            name="emailAddress"
+                                            value={formData.emailAddress}
+                                            onChange={(e) => setFormData({...formData, emailAddress: e.target.value})}
+                                            required
+                                            className="w-full pl-12 pr-4 py-3.5 bg-zinc-800 border border-zinc-700 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/30 focus:border-[#ffdd95]/50 transition-all font-medium shadow-inner"
+                                            placeholder="jane@example.com"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Phone Number</label>
+                                    <div className="relative group">
+                                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-[#ffdd95] transition-colors">
+                                            <Phone size={18} />
+                                        </div>
+                                        <input 
+                                            type="tel" 
+                                            name="phoneNumber"
+                                            value={formData.phoneNumber}
+                                            onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})}
+                                            required
+                                            className="w-full pl-12 pr-4 py-3.5 bg-zinc-800 border border-zinc-700 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-[#ffdd95]/30 focus:border-[#ffdd95]/50 transition-all shadow-inner"
+                                            placeholder="+63 9xx xxxx xxx"
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2.5">Username</label>
+                                    <div className="relative group/locked">
+                                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600">
+                                            <Shield size={18} />
+                                        </div>
+                                        <input 
+                                            type="text" 
+                                            value={user?.username || ''} 
+                                            disabled 
+                                            className="w-full pl-12 pr-12 py-3.5 bg-zinc-950/50 border border-zinc-800 rounded-2xl text-zinc-500 cursor-not-allowed font-bold opacity-80" 
+                                        />
+                                        <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                            <Lock size={14} className="text-zinc-700" />
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-600 mt-2 ml-1 flex items-center gap-1.5 font-medium italic">
+                                        Username is your permanent platform ID and cannot be changed.
+                                    </p>
                                 </div>
                             </div>
 

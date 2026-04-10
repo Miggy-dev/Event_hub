@@ -13,7 +13,13 @@ import AdminRegistrants from './pages/AdminRegistrants.jsx'
 import Archive from './pages/Archive.jsx'
 import Profile from './pages/Profile.jsx'
 import SuperAdminDashboard from './pages/SuperAdminDashboard.jsx'
+import SuperAdminEvents from './pages/SuperAdminEvents.jsx'
 import SuperRegister from './pages/SuperRegister.jsx'
+import OrganizerFinancials from './pages/OrganizerFinancials.jsx'
+import SuperAdminPayments from './pages/SuperAdminPayments.jsx'
+import EventCheckIn from './pages/EventCheckIn.jsx'
+import EventScanner from './pages/EventScanner.jsx'
+import EventAttendance from './pages/EventAttendance.jsx'
 
 import './css/global.css'
 
@@ -29,10 +35,16 @@ createRoot(document.getElementById('root')).render(
           <Route path="dashboard" element={<UserDashboard />} />
           <Route path="archive" element={<Archive />} />
           <Route path="profile" element={<Profile />} />
-           <Route path="admin" element={<AdminDashboard />} />
+          <Route path="admin" element={<AdminDashboard />} />
+          <Route path="admin/financials" element={<OrganizerFinancials />} />
           <Route path="admin/events/:id/registrants" element={<AdminRegistrants />} />
+          <Route path="admin/events/:id/check-in" element={<EventCheckIn />} />
+          <Route path="admin/events/:id/attendance" element={<EventAttendance />} />
           <Route path="super-admin" element={<SuperAdminDashboard />} />
+          <Route path="super-admin/payments" element={<SuperAdminPayments />} />
+          <Route path="super-admin/events" element={<SuperAdminEvents />} />
           <Route path="super-register" element={<SuperRegister />} />
+          <Route path="scanner" element={<EventScanner />} />
         </Route>
       </Routes>
     </BrowserRouter>

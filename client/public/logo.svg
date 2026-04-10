@@ -1,0 +1,63 @@
+<svg width="280" height="80" viewBox="0 0 280 80" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Elegant Gold/Silver Gradient for the icon -->
+    <linearGradient id="iconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#ffe4ab;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#dfa32e;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Subtle glow for the center node -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <!-- Glassy text gradient -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e2e8f0;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Emblem (Modern Network Hub) -->
+  <g transform="translate(40,40)">
+    <!-- Inner Aura -->
+    <circle r="14" fill="#dfa32e" fill-opacity="0.15" />
+    
+    <!-- Main Center Hub -->
+    <circle r="8" fill="url(#iconGradient)" filter="url(#glow)" />
+    
+    <!-- Sophisticated Connection Lines -->
+    <g stroke-width="2" stroke-linecap="round">
+      <!-- 8-Point Symmetry Nodes -->
+      <path d="M0 -22 L0 -12" stroke="white" stroke-opacity="0.8" />
+      <path d="M15.5 -15.5 L8.5 -8.5" stroke="#ffe4ab" stroke-opacity="0.6" />
+      <path d="M22 0 L12 0" stroke="white" stroke-opacity="0.8" />
+      <path d="M15.5 15.5 L8.5 8.5" stroke="#dfa32e" stroke-opacity="0.6" />
+      <path d="M0 22 L0 12" stroke="white" stroke-opacity="0.8" />
+      <path d="M-15.5 15.5 L-8.5 8.5" stroke="#ffe4ab" stroke-opacity="0.6" />
+      <path d="M-22 0 L-12 0" stroke="white" stroke-opacity="0.8" />
+      <path d="M-15.5 -15.5 L-8.5 -8.5" stroke="#dfa32e" stroke-opacity="0.6" />
+    </g>
+
+    <!-- Professional Outer Nodes -->
+    <circle cx="0" cy="-22" r="2.5" fill="white" />
+    <circle cx="15.5" cy="-15.5" r="2.5" fill="#ffe4ab" />
+    <circle cx="22" cy="0" r="2.5" fill="white" />
+    <circle cx="15.5" cy="15.5" r="2.5" fill="#dfa32e" />
+    <circle cx="0" cy="22" r="2.5" fill="white" />
+    <circle cx="-15.5" cy="15.5" r="2.5" fill="#ffe4ab" />
+    <circle cx="-22" cy="0" r="2.5" fill="white" />
+    <circle cx="-15.5" cy="-15.5" r="2.5" fill="#dfa32e" />
+  </g>
+
+  <!-- Typography -->
+  <text x="85" y="52" font-size="36" font-family="'Inter', 'Outfit', 'Segoe UI', Arial, sans-serif" font-weight="900" letter-spacing="-1.2">
+    <tspan fill="url(#textGradient)">Event</tspan>
+    <tspan fill="#dfa32e">Hub</tspan>
+  </text>
+  
+  <!-- Subtle Slogan Underline -->
+  <path d="M85 62 L150 62" stroke="#dfa32e" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
+</svg>

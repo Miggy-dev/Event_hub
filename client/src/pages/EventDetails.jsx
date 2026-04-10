@@ -14,6 +14,7 @@ export default function EventDetails() {
     const [registering, setRegistering] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+    const [flashMessage, setFlashMessage] = useState({ text: '', type: '' });
     const [userRegistration, setUserRegistration] = useState(null);
     const [userRating, setUserRating] = useState(null);
     const [userComment, setUserComment] = useState('');
@@ -22,14 +23,25 @@ export default function EventDetails() {
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [lightboxImg, setLightboxImg] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
+    const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+    const [canRegister, setCanRegister] = useState(true);
     const [isEditing, setIsEditing] = useState(false);
     const [userName, setUserName] = useState('');
+    const [currentUserId, setCurrentUserId] = useState(null);
+    const [paymentMethod, setPaymentMethod] = useState('GCash'); // Default to GCash
+    const [showGCashSim, setShowGCashSim] = useState(false);
+    const [config, setConfig] = useState({ platform_fee: '2.00' });
 
     useEffect(() => {
         const fetchDetails = async () => {
             try {
-                const res = await axios.get(`${import.meta.env.VITE_API_URL}/events/${id}`, { withCredentials: true });
-                if (res.data.success) {
+                const [eventRes, configRes] = await Promise.all([
+                    axios.get(`${import.meta.env.VITE_API_URL}/events/${id}`, { withCredentials: true }),
+                    axios.get(`${import.meta.env.VITE_API_URL}/platform/config`)
+                ]);
+
+                if (eventRes.data.success) {
+                    const res = eventRes;
                     setEvent(res.data.event);
                     setTickets(res.data.tickets || []);
                     if (res.data.tickets?.length > 0) {
@@ -51,7 +63,14 @@ export default function EventDetails() {
                         setReviews(res.data.reviews);
                     }
                     setIsAdmin(res.data.isAdmin || false);
+                    setIsSuperAdmin(res.data.isSuperAdmin || false);
+                    setCanRegister(res.data.canRegister !== false);
                     setUserName(res.data.userName || '');
+                    setCurrentUserId(res.data.currentUserId || null);
+                }
+                
+                if (configRes.data.success) {
+                    setConfig(configRes.data.config);
                 }
             } catch (err) {
                 setError('Failed to load event details.');
@@ -77,6 +96,11 @@ export default function EventDetails() {
             return;
         }
 
+        if (paymentMethod === 'GCash' && !showGCashSim) {
+            setShowGCashSim(true);
+            return;
+        }
+
         setError('');
         setSuccess('');
         setRegistering(true);
@@ -86,19 +110,25 @@ export default function EventDetails() {
                 event_id: id,
                 ticket_id: selectedTicket,
                 quantity: parseInt(quantity),
-                device_info: getDeviceInfo()
+                device_info: getDeviceInfo(),
+                paymentMethod: paymentMethod
             }, { withCredentials: true });
 
             if (res.data.success) {
-                setSuccess('Registration successful! Redirecting to your dashboard in 3 seconds...');
+                const successMsg = paymentMethod === 'GCash' 
+                    ? 'Payment successful! Redirecting to your dashboard...' 
+                    : 'Registration successful! Please coordinate payment with the organizer. Redirecting...';
+                setFlashMessage({ text: successMsg, type: 'success' });
+                setShowGCashSim(false);
                 setTimeout(() => navigate('/dashboard'), 3000);
             }
         } catch (err) {
             if (err.response?.status === 401) {
-                navigate('/login'); // Redirect to login if unauthenticated
+                navigate('/login');
             } else {
-                setError(err.response?.data?.message || 'Failed to complete registration.');
+                setFlashMessage({ text: err.response?.data?.message || 'Failed to complete registration.', type: 'error' });
             }
+            setShowGCashSim(false);
         } finally {
             setRegistering(false);
         }
@@ -117,8 +147,49 @@ export default function EventDetails() {
             
             if (res.data.success) {
                 setUserRating(ratingValue);
-                setSuccess('Thank you for your review!');
+                setFlashMessage({ text: 'Thank you for your review!', type: 'success' });
+                setTimeout(() => setFlashMessage({ text: '', type: '' }), 3000);
+                setIsEditing(false);
                 // Refetch details to get updated average and community list
+                const details = await axios.get(`${import.meta.env.VITE_API_URL}/events/${id}`, { withCredentials: true });
+                if (details.data.success) {
+                    setEvent(details.data.event);
+                    setReviews(details.data.reviews);
+                    // Load the user's comment from the fetched reviews
+                    const userReview = details.data.reviews.find(r => r.user_name === userName);
+                    if (userReview) {
+                        setUserComment(userReview.comment || '');
+                    } else {
+                        setUserComment('');
+                    }
+                }
+            }
+        } catch (err) {
+            setFlashMessage({ text: err.response?.data?.message || 'Failed to submit rating.', type: 'error' });
+            setTimeout(() => setFlashMessage({ text: '', type: '' }), 3000);
+        } finally {
+            setSubmittingRating(false);
+        }
+    };
+
+    const handleDeleteRating = async () => {
+        if (!window.confirm('Are you sure you want to delete your review? This action cannot be undone.')) return;
+        
+        setSubmittingRating(true);
+        setError('');
+        try {
+            const res = await axios.delete(`${import.meta.env.VITE_API_URL}/events/${id}/rate`, { withCredentials: true });
+            
+            if (res.data.success) {
+                // Immediately update local state
+                setUserRating(null);
+                setUserComment('');
+                setIsEditing(false);
+                // Remove user's review from the reviews array
+                setReviews(prev => prev.filter(r => r.user_name !== userName));
+                setFlashMessage({ text: 'Review deleted successfully!', type: 'success' });
+                setTimeout(() => setFlashMessage({ text: '', type: '' }), 3000);
+                // Also refetch to ensure consistency
                 const details = await axios.get(`${import.meta.env.VITE_API_URL}/events/${id}`, { withCredentials: true });
                 if (details.data.success) {
                     setEvent(details.data.event);
@@ -126,7 +197,8 @@ export default function EventDetails() {
                 }
             }
         } catch (err) {
-            setError(err.response?.data?.message || 'Failed to submit rating.');
+            setFlashMessage({ text: err.response?.data?.message || 'Failed to delete rating.', type: 'error' });
+            setTimeout(() => setFlashMessage({ text: '', type: '' }), 3000);
         } finally {
             setSubmittingRating(false);
         }
@@ -179,11 +251,23 @@ export default function EventDetails() {
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div className="bg-zinc-900 rounded-3xl shadow-2xl border border-zinc-800 overflow-hidden flex flex-col lg:flex-row">
+            {/* Floating Toast Notification */}
+            {flashMessage.text && (
+                <div className={`fixed top-6 right-6 z-[100] p-4 rounded-2xl border flex items-center gap-3 animate-slideIn shadow-[0_8px_30px_rgb(0,0,0,0.5)] backdrop-blur-xl ${
+                    flashMessage.type === 'success' 
+                        ? 'bg-green-950/90 border-green-500/30 text-green-400' 
+                        : 'bg-red-950/90 border-red-500/30 text-red-400'
+                }`}>
+                    {flashMessage.type === 'success' ? <CheckCircle2 size={20} className="drop-shadow-md" /> : <AlertCircle size={20} className="drop-shadow-md" />}
+                    <span className="font-bold text-sm tracking-wide drop-shadow-sm">{flashMessage.text}</span>
+                </div>
+            )}
+
+            <div className={`bg-zinc-900 rounded-3xl shadow-2xl border border-zinc-800 overflow-hidden flex flex-col ${canRegister ? 'lg:flex-row' : ''}`}>
                 
                 {/* Visual / Info Side */}
-                <div className="lg:w-2/3 flex flex-col">
-                    <div className="h-[400px] w-full bg-zinc-800 relative">
+                <div className={`${canRegister ? 'lg:w-2/3' : 'w-full'} flex flex-col`}>
+                    <div className={`${canRegister ? 'h-[400px]' : 'h-[500px]'} w-full bg-zinc-800 relative`}>
                         {event.image_url ? (
                             <img 
                                 src={event.image_url.startsWith('http') ? event.image_url : `${import.meta.env.VITE_API_URL}/uploads/${event.image_url}`} 
@@ -228,7 +312,7 @@ export default function EventDetails() {
                         </div>
 
                         <div className="prose prose-invert prose-zinc max-w-none">
-                            <div className="flex items-center justify-between mb-4">
+                            <div className={`flex items-center mb-4 ${canRegister ? 'justify-between' : 'justify-start gap-6'}`}>
                                 <h3 className="text-xl font-bold text-white mb-0">About this Event</h3>
                                 <button 
                                     onClick={handleAddToCalendar}
@@ -322,7 +406,7 @@ export default function EventDetails() {
                                             ))}
                                         </div>
                                     </div>
-                                ) : (isEditing || userRating) ? (
+                                ) : isEditing ? (
                                     <div className="bg-zinc-800/20 border border-zinc-700/50 rounded-2xl p-6 mb-8">
                                         <div className="flex items-center gap-3 mb-6">
                                             <div className="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center font-bold text-white border border-zinc-600">
@@ -361,11 +445,11 @@ export default function EventDetails() {
                                                 Cancel
                                             </button>
                                             <button 
-                                                onClick={() => { handleRateEvent(userRating); setIsEditing(false); }}
+                                                onClick={() => handleRateEvent(userRating)}
                                                 disabled={submittingRating || !userRating}
                                                 className="px-6 py-2 text-sm font-bold bg-yellow-400 text-black rounded-lg hover:bg-yellow-300 disabled:opacity-50 transition-all shadow-lg"
                                             >
-                                                {submittingRating ? 'Posting...' : 'Post'}
+                                                {submittingRating ? 'Saving...' : reviews.some(r => r.user_name === userName) ? 'Save' : 'Post'}
                                             </button>
                                         </div>
                                     </div>
@@ -373,7 +457,7 @@ export default function EventDetails() {
                             </div>
 
                             {/* Community Reviews List */}
-                            <div className="space-y-10">
+                            <div className="space-y-10 max-h-[500px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
                                 {/* Your Review - Shown at top if exists */}
                                 {userRating && !isEditing && (
                                     <div className="bg-zinc-800/10 border border-zinc-800/50 rounded-2xl p-6 relative group">
@@ -391,12 +475,27 @@ export default function EventDetails() {
                                                     </div>
                                                 </div>
                                             </div>
-                                            <button 
-                                                onClick={() => setIsEditing(true)}
-                                                className="text-xs font-bold text-yellow-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                            >
-                                                Edit
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <button 
+                                                    onClick={() => {
+                                                        setIsEditing(true);
+                                                        // Load existing comment from reviews
+                                                        const userReview = reviews.find(r => r.user_name === userName);
+                                                        if (userReview && userReview.comment) {
+                                                            setUserComment(userReview.comment);
+                                                        }
+                                                    }}
+                                                    className="text-xs font-bold text-yellow-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-yellow-300"
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button 
+                                                    onClick={handleDeleteRating}
+                                                    className="text-xs font-bold text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-300"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
                                         </div>
                                         <p className="text-zinc-300 text-sm italic">"{userComment || 'No written feedback provided.'}"</p>
                                     </div>
@@ -440,133 +539,257 @@ export default function EventDetails() {
                 </div>
 
                 {/* Checkout / Ticketing Side */}
-                <div className="lg:w-1/3 bg-zinc-800 border-l border-zinc-700 p-8 lg:p-10 flex flex-col">
-                    <h3 className="text-2xl font-bold text-white mb-8">Secure Your Spot</h3>
-                    
-                    {error && (
-                        <div className="mb-6 bg-red-950/30 border border-red-900/50 text-red-400 px-4 py-4 rounded-2xl text-sm font-bold flex items-center gap-2 animate-fadeIn">
-                            <AlertCircle size={18} /> {error}
-                        </div>
-                    )}
-                    {success && (
-                        <div className="mb-6 bg-green-950/30 border border-green-900/50 text-green-400 px-4 py-4 rounded-2xl text-sm font-bold flex items-center gap-2 animate-fadeIn shadow-[0_0_20px_rgba(34,197,94,0.1)]">
-                            <CheckCircle2 size={18} /> {success}
-                        </div>
-                    )}
-
-                    {userRegistration ? (
-                        <div className="flex flex-col h-full justify-between">
-                            <div className="bg-green-950/20 border border-green-900/30 rounded-2xl p-6 text-center shadow-lg">
-                                <div className="w-16 h-16 bg-green-500/10 text-green-400 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-500/20">
-                                    <CheckCircle2 size={32} />
-                                </div>
-                                <h4 className="text-xl font-bold text-white mb-2">You're going!</h4>
-                                <p className="text-zinc-400 text-sm mb-6">
-                                    You have {userRegistration.quantity} ticket{userRegistration.quantity > 1 ? 's' : ''} for this event. 
-                                </p>
-                                <button 
-                                    onClick={() => navigate('/dashboard')}
-                                    className="w-full bg-zinc-800 text-white font-bold py-3.5 rounded-xl hover:bg-zinc-700 border border-zinc-700 transition-colors mb-2"
-                                >
-                                    View in Dashboard
-                                </button>
-                                <button 
-                                    onClick={handleAddToCalendar}
-                                    className="w-full bg-[#ffdd95]/10 text-[#ffdd95] font-bold py-3.5 rounded-xl hover:bg-[#ffdd95]/20 border border-[#ffdd95]/20 transition-all flex items-center justify-center gap-2"
-                                >
-                                    <Calendar size={18} /> Add to Calendar
-                                </button>
-                                <p className="text-[10px] text-zinc-500 mt-4">
-                                    To manage or cancel your registration, please visit your tickets page.
-                                </p>
+                {canRegister ? (
+                    <div className="lg:w-1/3 bg-zinc-800 border-l border-zinc-700 p-8 lg:p-10 flex flex-col">
+                        <h3 className="text-2xl font-bold text-white mb-8">Secure Your Spot</h3>
+                        
+                        {error && (
+                            <div className="mb-6 bg-red-950/30 border border-red-900/50 text-red-400 px-4 py-4 rounded-2xl text-sm font-bold flex items-center gap-2 animate-fadeIn">
+                                <AlertCircle size={18} /> {error}
                             </div>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="space-y-6 flex-1">
-                                <div>
-                                    <label className="block text-sm font-semibold text-zinc-300 mb-3">Select Ticket Tier</label>
-                                    {tickets.length > 0 ? (
-                                        <div className="space-y-3">
-                                            {tickets.map(ticket => (
-                                                <div 
-                                                    key={ticket.id}
-                                                    onClick={() => ticket.quantity_available > 0 && setSelectedTicket(ticket.id)}
-                                                    className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex justify-between items-center ${
-                                                        selectedTicket === ticket.id 
-                                                            ? 'border-white bg-zinc-900 shadow-lg' 
-                                                            : ticket.quantity_available > 0 
-                                                                ? 'border-zinc-700 bg-zinc-900/50 hover:border-zinc-500' 
-                                                                : 'border-zinc-800 bg-zinc-900 opacity-40 cursor-not-allowed'
+                        )}
+
+                        {userRegistration ? (
+                            <div className="flex flex-col h-full justify-between">
+                                <div className="bg-green-950/20 border border-green-900/30 rounded-2xl p-6 text-center shadow-lg">
+                                    <div className="w-16 h-16 bg-green-500/10 text-green-400 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-500/20">
+                                        <CheckCircle2 size={32} />
+                                    </div>
+                                    <h4 className="text-xl font-bold text-white mb-2">You're going!</h4>
+                                    <p className="text-zinc-400 text-sm mb-6">
+                                        You have {userRegistration.quantity} ticket{userRegistration.quantity > 1 ? 's' : ''} for this event. 
+                                    </p>
+                                    <button 
+                                        onClick={() => navigate('/dashboard')}
+                                        className="w-full bg-zinc-800 text-white font-bold py-3.5 rounded-xl hover:bg-zinc-700 border border-zinc-700 transition-colors mb-2"
+                                    >
+                                        View in Dashboard
+                                    </button>
+                                    <button 
+                                        onClick={handleAddToCalendar}
+                                        className="w-full bg-[#ffdd95]/10 text-[#ffdd95] font-bold py-3.5 rounded-xl hover:bg-[#ffdd95]/20 border border-[#ffdd95]/20 transition-all flex items-center justify-center gap-2"
+                                    >
+                                        <Calendar size={18} /> Add to Calendar
+                                    </button>
+                                    <p className="text-[10px] text-zinc-500 mt-4">
+                                        To manage or cancel your registration, please visit your tickets page.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="space-y-6 flex-1">
+                                    {(parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0) && (
+                                        <div className="bg-red-600/10 border border-red-600/30 p-4 rounded-xl flex items-center gap-3 mb-6 animate-pulse">
+                                            <div className="p-2 bg-red-600 rounded-lg shadow-lg">
+                                                <AlertCircle size={18} className="text-white" />
+                                            </div>
+                                            <div>
+                                                <p className="text-red-400 font-black text-sm uppercase tracking-tighter leading-tight">FULLY BOOKED</p>
+                                                <p className="text-red-500/70 text-[11px] font-medium mt-0.5">All ticket tiers for this event have been exhausted.</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div>
+                                        <label className="block text-sm font-semibold text-zinc-300 mb-3">Select Ticket Tier</label>
+                                        {tickets.length > 0 ? (
+                                            <div className="space-y-3">
+                                                {tickets.map(ticket => (
+                                                    <div 
+                                                        key={ticket.id}
+                                                        onClick={() => ticket.quantity_available > 0 && setSelectedTicket(ticket.id)}
+                                                        className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex justify-between items-center ${
+                                                            selectedTicket === ticket.id 
+                                                                ? 'border-white bg-zinc-900 shadow-lg' 
+                                                                : ticket.quantity_available > 0 
+                                                                    ? 'border-zinc-700 bg-zinc-900/50 hover:border-zinc-500' 
+                                                                    : 'border-zinc-800 bg-zinc-900 opacity-40 cursor-not-allowed'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <h4 className="font-bold text-white">{ticket.name}</h4>
+                                                            <p className="text-xs text-zinc-500 mt-1">
+                                                                {ticket.quantity_available > 0 ? `${ticket.quantity_available} remaining` : 'Fully Booked'}
+                                                            </p>
+                                                        </div>
+                                                        <div className="text-lg text-white font-extrabold text-right flex flex-col">
+                                                            <span>₱{parseFloat(ticket.price).toFixed(2)}</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="bg-zinc-900/50 p-6 rounded-2xl border border-dashed border-zinc-700 flex flex-col items-center text-center gap-3">
+                                                <div className="p-3 bg-zinc-800 rounded-full">
+                                                    <Ticket size={24} className="text-zinc-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-zinc-300 font-bold text-sm tracking-tight">Free Registration</p>
+                                                    <p className="text-zinc-500 text-xs mt-1 leading-relaxed">No ticket tiers are configured for this event. You can register for free.</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {tickets.length > 0 && (
+                                        <div>
+                                            <label className="block text-sm font-semibold text-zinc-300 mb-3">Quantity</label>
+                                            <select 
+                                                value={quantity}
+                                                onChange={(e) => setQuantity(e.target.value)}
+                                                className="w-full p-4 bg-zinc-900 border border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-600 font-medium text-white"
+                                            >
+                                                {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                                                    <option key={n} value={n} className="bg-zinc-900">{n} Ticket{n > 1 ? 's' : ''}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    
+                                    {tickets.length > 0 && selectedTicket && (
+                                        <div className="bg-zinc-900 p-5 rounded-xl border border-zinc-700 shadow-sm mt-8">
+                                            <div className="flex justify-between items-center text-sm font-medium text-zinc-400 mb-2">
+                                                <span>Subtotal ({quantity}x)</span>
+                                                <span>₱{(parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity).toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center text-sm font-medium text-zinc-400 mb-4 pb-4 border-b border-zinc-700">
+                                                <div className="flex flex-col">
+                                                    <span>Platform Fee</span>
+                                                    <span className="text-[10px] text-zinc-500 uppercase tracking-tighter">Security & Maintenance</span>
+                                                </div>
+                                                <span>₱{parseFloat(config.platform_fee).toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center font-bold text-lg text-white">
+                                                <span>Total Amount</span>
+                                                <span>₱{((parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity) + parseFloat(config.platform_fee)).toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Payment Method Selector */}
+                                    {tickets.length > 0 && selectedTicket && (
+                                        <div className="mt-8">
+                                            <label className="block text-sm font-semibold text-zinc-300 mb-4">Payment Method</label>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <button 
+                                                    onClick={() => setPaymentMethod('GCash')}
+                                                    className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
+                                                        paymentMethod === 'GCash' ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 bg-zinc-900/50 hover:border-zinc-600'
                                                     }`}
                                                 >
-                                                    <div>
-                                                        <h4 className="font-bold text-white">{ticket.name}</h4>
-                                                        <p className="text-xs text-zinc-500 mt-1">
-                                                            {ticket.quantity_available > 0 ? `${ticket.quantity_available} remaining` : 'Sold Out'}
-                                                        </p>
-                                                    </div>
-                                                    <div className="text-lg text-white font-extrabold text-right flex flex-col">
-                                                        <span>₱{parseFloat(ticket.price).toFixed(2)}</span>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                    <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center font-black text-white text-[10px]">GC</div>
+                                                    <span className="text-xs font-bold text-white">GCash</span>
+                                                </button>
+                                                <button 
+                                                    onClick={() => setPaymentMethod('Person-to-Person')}
+                                                    className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
+                                                        paymentMethod === 'Person-to-Person' ? 'border-zinc-300 bg-white/10' : 'border-zinc-700 bg-zinc-900/50 hover:border-zinc-600'
+                                                    }`}
+                                                >
+                                                    <Users size={20} className="text-zinc-400" />
+                                                    <span className="text-xs font-bold text-white">Person to Person</span>
+                                                </button>
+                                            </div>
+                                            {paymentMethod === 'Person-to-Person' && (
+                                                <p className="text-[10px] text-zinc-500 mt-3 italic">
+                                                    * Payment must be settled directly with the organizer. Your ticket will remain 'Pending' until confirmed.
+                                                </p>
+                                            )}
                                         </div>
-                                    ) : (
-                                        <p className="text-sm text-zinc-400 bg-zinc-900 p-4 rounded-xl border border-zinc-700">
-                                            Free Registration (No tiers configured)
-                                        </p>
                                     )}
+
+                                    <button 
+                                        onClick={handleRegister}
+                                        disabled={
+                                            registering || 
+                                            (tickets.length > 0 && !selectedTicket) || 
+                                            new Date(event.date) < new Date() ||
+                                            (parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0)
+                                        }
+                                        className={`w-full font-bold text-lg py-5 rounded-xl transition-all mt-8 shadow-xl hover:scale-[1.02] active:scale-[0.98] ${
+                                            (parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0)
+                                                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed shadow-none hover:scale-100'
+                                                : 'bg-white text-zinc-950 hover:bg-zinc-200'
+                                        }`}
+                                    >
+                                        {registering ? 'Processing...' : 
+                                         new Date(event.date) < new Date() ? 'Event Ended' : 
+                                         (parseInt(event.ticket_tier_count) > 0 && parseInt(event.total_available_tickets) === 0) ? 'Fully Booked' :
+                                         'Register'}
+                                    </button>
                                 </div>
 
-                                {tickets.length > 0 && (
-                                    <div>
-                                        <label className="block text-sm font-semibold text-zinc-300 mb-3">Quantity</label>
-                                        <select 
-                                            value={quantity}
-                                            onChange={(e) => setQuantity(e.target.value)}
-                                            className="w-full p-4 bg-zinc-900 border border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-600 font-medium text-white"
-                                        >
-                                            {[1,2,3,4,5,6,7,8,9,10].map(n => (
-                                                <option key={n} value={n} className="bg-zinc-900">{n} Ticket{n > 1 ? 's' : ''}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-                                
-                                {tickets.length > 0 && selectedTicket && (
-                                    <div className="bg-zinc-900 p-5 rounded-xl border border-zinc-700 shadow-sm mt-8">
-                                        <div className="flex justify-between items-center text-sm font-medium text-zinc-400 mb-2">
-                                            <span>Subtotal ({quantity}x)</span>
-                                            <span>₱{(parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity).toFixed(2)}</span>
-                                        </div>
-                                        <div className="flex justify-between items-center text-sm font-medium text-zinc-400 mb-4 pb-4 border-b border-zinc-700">
-                                            <span>Platform Fee</span>
-                                            <span>₱2.50</span>
-                                        </div>
-                                        <div className="flex justify-between items-center font-bold text-lg text-white">
-                                            <span>Total</span>
-                                            <span>₱{((parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity) + 2.50).toFixed(2)}</span>
-                                        </div>
-                                    </div>
-                                )}
+                                <p className="text-center text-xs text-zinc-500 mt-4 font-medium flex items-center justify-center gap-2">
+                                    <Lock size={12} className="text-zinc-600" /> Secure 1-click checkout
+                                </p>
+                            </>
+                        )}
+                    </div>
+                ) : null}
+            </div>
 
-                                <button 
-                                    onClick={handleRegister}
-                                    disabled={registering || (tickets.length > 0 && !selectedTicket) || new Date(event.date) < new Date()}
-                                    className="w-full bg-white text-zinc-950 font-bold text-lg py-5 rounded-xl hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:shadow-none transition-all mt-8 shadow-xl hover:scale-[1.02] active:scale-[0.98]"
-                                >
-                                    {registering ? 'Processing...' : new Date(event.date) < new Date() ? 'Event Ended' : tickets.length > 0 ? 'Checkout & Register' : 'Register for Free'}
-                                </button>
+            {/* GCash Simulation Modal */}
+            {showGCashSim && (
+                <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4">
+                    <div className="bg-[#0055e6] w-full max-w-sm rounded-[32px] overflow-hidden shadow-2xl animate-scaleIn border border-white/10">
+                        <div className="p-8 text-center bg-gradient-to-b from-blue-500 to-blue-600">
+                            <div className="w-16 h-16 bg-white rounded-2xl mx-auto mb-4 flex items-center justify-center font-black text-blue-600 text-2xl shadow-xl">G</div>
+                            <h2 className="text-white font-black text-2xl tracking-tight">GCash Checkout</h2>
+                            <p className="text-blue-100/70 text-sm mt-1">Professional Payment Simulation</p>
+                        </div>
+                        
+                        <div className="p-8 space-y-6 bg-white">
+                            <div className="bg-blue-50 rounded-2xl p-5 border border-blue-100">
+                                <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Paying To</p>
+                                <p className="text-blue-900 font-bold text-lg">{event.title}</p>
+                                <div className="mt-4 pt-4 border-t border-blue-200/50 flex justify-between items-end">
+                                    <div>
+                                        <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Total Amount</p>
+                                        <p className="text-blue-900 font-black text-3xl">₱{((parseFloat(tickets.find(t => t.id === selectedTicket)?.price || 0) * quantity) + parseFloat(config.platform_fee)).toFixed(2)}</p>
+                                    </div>
+                                    <div className="bg-blue-600 text-white p-2 rounded-xl">
+                                        <CheckCircle2 size={24} />
+                                    </div>
+                                </div>
                             </div>
 
-                            <p className="text-center text-xs text-zinc-500 mt-4 font-medium flex items-center justify-center gap-2">
-                                <Lock size={12} className="text-zinc-600" /> Secure 1-click checkout
+                            <div className="space-y-4">
+                                <div className="bg-zinc-50 rounded-xl p-4 flex items-center justify-between border border-zinc-100">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-full bg-zinc-200 border-2 border-white shadow-sm flex items-center justify-center">
+                                            <Users size={16} className="text-zinc-500" />
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight leading-none mb-1">Funding Source</p>
+                                            <p className="text-zinc-900 font-bold text-sm">GCash Balance</p>
+                                        </div>
+                                    </div>
+                                    <p className="text-zinc-400 text-[10px] font-black">ACTIVE</p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <button 
+                                    onClick={() => setShowGCashSim(false)}
+                                    className="py-4 bg-zinc-100 text-zinc-600 font-black rounded-2xl hover:bg-zinc-200 transition-all text-sm"
+                                >
+                                    CANCEL
+                                </button>
+                                <button 
+                                    onClick={handleRegister}
+                                    disabled={registering}
+                                    className="py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-lg text-sm disabled:opacity-50"
+                                >
+                                    {registering ? 'PAYING...' : 'PAY NOW'}
+                                </button>
+                            </div>
+                            <p className="text-center text-zinc-400 text-[10px] font-medium italic">
+                                This is a secure payment simulation for EventHub.
                             </p>
-                        </>
-                    )}
+                        </div>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Lightbox Modal */}
             {lightboxOpen && (

@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Ticket, User as UserIcon, ChevronDown, Settings, LogOut } from 'lucide-react';
+import { User as UserIcon, ChevronDown, Settings, LogOut } from 'lucide-react';
 
 export default function Navbar() {
   const [user, setUser] = useState(null);
@@ -39,8 +39,8 @@ export default function Navbar() {
         <div className="flex justify-between h-16 items-center">
           
           <div className="flex-shrink-0 flex items-center">
-            <Link to="/" className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
-              <Ticket className="w-8 h-8 text-white fill-white/10" /> EventHub
+            <Link to="/" className="flex items-center">
+              <img src="/logo.svg" alt="EventHub" className="h-11 object-contain" />
             </Link>
           </div>
 
@@ -50,10 +50,16 @@ export default function Navbar() {
             {user ? (
               <div className="flex items-center gap-4">
                 {user.roleName === 'Super Admin' && (
-                  <Link to="/super-admin" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">Super Admin Hub</Link>
+                  <>
+                    <Link to="/super-admin" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">Super Admin Hub</Link>
+                    <Link to="/super-admin/payments" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">Platform Vault</Link>
+                  </>
                 )}
                 {user.roleName === 'Admin' && (
-                  <Link to="/admin" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">Admin Panel</Link>
+                  <>
+                    <Link to="/admin" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">Admin Panel</Link>
+                    <Link to="/admin/financials" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">Financials</Link>
+                  </>
                 )}
                 {user.roleName === 'User' && (
                   <Link to="/dashboard" className="text-zinc-400 hover:text-zinc-100 font-medium transition-colors">My Tickets</Link>

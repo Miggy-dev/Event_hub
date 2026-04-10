@@ -145,14 +145,15 @@ export default function Archive() {
                 </Link>
             </div>
 
+            {/* Flash Message (Floating Toast) */}
             {flashMessage.text && (
-                <div className={`mb-8 p-4 rounded-xl border animate-fadeIn flex items-center gap-3 ${
+                <div className={`fixed top-6 right-6 z-[100] p-4 rounded-2xl border flex items-center gap-3 shadow-[0_8px_30px_rgb(0,0,0,0.5)] backdrop-blur-xl animate-fadeIn ${
                     flashMessage.type === 'success' 
-                        ? 'bg-green-950/20 border-green-900/50 text-green-400' 
-                        : 'bg-red-950/20 border-red-900/50 text-red-400'
+                        ? 'bg-green-950/90 border-green-500/30 text-green-400' 
+                        : 'bg-red-950/90 border-red-500/30 text-red-400'
                 }`}>
-                    {flashMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                    <span className="font-medium text-sm">{flashMessage.text}</span>
+                    {flashMessage.type === 'success' ? <CheckCircle2 size={20} className="drop-shadow-md" /> : <AlertCircle size={20} className="drop-shadow-md" />}
+                    <span className="font-bold text-sm tracking-wide drop-shadow-sm">{flashMessage.text}</span>
                 </div>
             )}
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Plus, Users, Edit, Trash2, Clock, CheckCircle2, AlertCircle, User as UserIcon } from 'lucide-react';
+import { Plus, Users, Edit, Trash2, Clock, CheckCircle2, AlertCircle, User as UserIcon, TrendingUp } from 'lucide-react';
 
 export default function AdminDashboard() {
     const navigate = useNavigate();
@@ -46,6 +46,9 @@ export default function AdminDashboard() {
 
         } catch (error) {
             console.error("Admin fetch error", error);
+            if (error.response?.status === 401 || error.response?.status === 403) {
+                navigate('/login');
+            }
         } finally {
             setLoading(false);
         }
@@ -116,11 +119,20 @@ export default function AdminDashboard() {
                 });
             }
 
+            // 1. Update Event Details
             const res = await axios.put(`${import.meta.env.VITE_API_URL}/events/${editingEvent.id}`, formData, { 
                 withCredentials: true
             });
             
             if (res.data.success) {
+                // 2. Update Ticket Details
+                if (editingEvent.ticketPrice !== undefined && editingEvent.ticketQuantity !== undefined) {
+                    await axios.put(`${import.meta.env.VITE_API_URL}/events/${editingEvent.id}/tickets`, {
+                        price: editingEvent.ticketPrice,
+                        quantity_available: editingEvent.ticketQuantity
+                    }, { withCredentials: true });
+                }
+
                 setFlashMessage({ text: 'Event updated successfully!', type: 'success' });
                 setTimeout(() => setFlashMessage({ text: '', type: '' }), 4000);
                 setShowEditModal(false);
@@ -148,12 +160,28 @@ export default function AdminDashboard() {
         }
     };
 
-    const openEditModal = (event) => {
-        // Format date for datetime-local input
-        const eventDate = new Date(event.date);
-        const formattedDate = eventDate.toISOString().slice(0, 16);
-        setEditingEvent({ ...event, date: formattedDate });
-        setShowEditModal(true);
+    const openEditModal = async (event) => {
+        try {
+            // Fetch latest event details including tickets
+            const res = await axios.get(`${import.meta.env.VITE_API_URL}/events/${event.id}`);
+            const fullEvent = res.data.event;
+            const tickets = res.data.tickets || [];
+            const mainTicket = tickets[0] || {};
+
+            const eventDate = new Date(fullEvent.date);
+            const formattedDate = eventDate.toISOString().slice(0, 16);
+            
+            setEditingEvent({ 
+                ...fullEvent, 
+                date: formattedDate,
+                ticketPrice: mainTicket.price || '',
+                ticketQuantity: mainTicket.quantity_available || ''
+            });
+            setShowEditModal(true);
+        } catch (error) {
+            console.error("Error opening edit modal", error);
+            alert("Failed to load event details");
+        }
     };
 
     const { upcomingEvents, endedEvents } = useMemo(() => {
@@ -210,14 +238,15 @@ export default function AdminDashboard() {
                 </div>
             </div>
 
+            {/* Flash Message (Floating Toast) */}
             {flashMessage.text && (
-                <div className={`mb-8 p-4 rounded-xl border animate-fadeIn flex items-center gap-3 ${
+                <div className={`fixed top-6 right-6 z-[100] p-4 rounded-2xl border flex items-center gap-3 shadow-[0_8px_30px_rgb(0,0,0,0.5)] backdrop-blur-xl animate-fadeIn ${
                     flashMessage.type === 'success' 
-                        ? 'bg-green-950/20 border-green-900/50 text-green-400' 
-                        : 'bg-red-950/20 border-red-900/50 text-red-400'
+                        ? 'bg-green-950/90 border-green-500/30 text-green-400' 
+                        : 'bg-red-950/90 border-red-500/30 text-red-400'
                 }`}>
-                    {flashMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                    <span className="font-medium text-sm">{flashMessage.text}</span>
+                    {flashMessage.type === 'success' ? <CheckCircle2 size={20} className="drop-shadow-md" /> : <AlertCircle size={20} className="drop-shadow-md" />}
+                    <span className="font-bold text-sm tracking-wide drop-shadow-sm">{flashMessage.text}</span>
                 </div>
             )}
 
@@ -551,18 +580,31 @@ export default function AdminDashboard() {
                                 <textarea required rows="3" value={editingEvent.description} onChange={e => setEditingEvent({...editingEvent, description: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-zinc-600"></textarea>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
-                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Capacity</label>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Total Venue Capacity</label>
                                     <input required type="number" min="1" value={editingEvent.capacity} onChange={e => setEditingEvent({...editingEvent, capacity: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Status</label>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Event Status</label>
                                     <select value={editingEvent.status} onChange={e => setEditingEvent({...editingEvent, status: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white">
                                         <option value="Published">Published</option>
                                         <option value="Draft">Draft</option>
                                         <option value="Cancelled">Cancelled</option>
                                     </select>
+                                </div>
+                            </div>
+
+                            <hr className="border-zinc-800" />
+                            <h3 className="text-lg font-bold text-white">Ticketing Details</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Ticket Price (₱)</label>
+                                    <input type="number" step="0.01" min="0" value={editingEvent.ticketPrice} onChange={e => setEditingEvent({...editingEvent, ticketPrice: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white" placeholder="e.g. 50.00" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-zinc-400 mb-2">Tickets Available</label>
+                                    <input type="number" min="1" value={editingEvent.ticketQuantity} onChange={e => setEditingEvent({...editingEvent, ticketQuantity: e.target.value})} className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white" />
                                 </div>
                             </div>
 
