@@ -23,6 +23,7 @@ const OrganizerDebtBlock = ({ totalOwed, onSettle }) => {
             setIsSettling(false);
         }
     };
+    
 
     return (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-zinc-950/90 backdrop-blur-lg p-4">
